@@ -37,21 +37,27 @@ async def recv_kind(socket, kind: str, timeout: float = 3.0) -> dict:
     raise TimeoutError(f"no {kind!r} message within {timeout}s")
 
 
-_cooldown_seen = False
+COLLECT_SECONDS = 0.3
 
 
 async def latest_snapshot(socket) -> dict:
-    """Snapshots stream at 20Hz, so drain the backlog and keep the newest."""
+    """Snapshots stream at 20Hz, so collect briefly and keep the newest.
+
+    Draining until a gap appears would end early whenever the network
+    jittered, handing back a stale position; a fixed window does not.
+    """
     newest = await recv_kind(socket, "s")
+    deadline = time.monotonic() + COLLECT_SECONDS
     while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return newest
         try:
-            message = await recv(socket, 0.05)
+            message = await recv(socket, remaining)
         except (TimeoutError, asyncio.TimeoutError):
             return newest
         if message.get("t") == "s":
             newest = message
-        elif message.get("t") == "cd":
-            globals()["_cooldown_seen"] = True
 
 
 _next_frame = 1

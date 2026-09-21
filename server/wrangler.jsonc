@@ -2,6 +2,7 @@
   "name": "meccha-chameleon",
   "main": "src/worker.ts",
   "compatibility_date": "2026-09-21",
+  "routes": [{ "pattern": "chameleon.omm.run", "custom_domain": true }],
   "durable_objects": {
     "bindings": [{ "name": "ROOM", "class_name": "RoomDO" }]
   },

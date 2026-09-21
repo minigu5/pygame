@@ -22,7 +22,7 @@ PING_INTERVAL = 1.0
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--server", default="ws://127.0.0.1:8787")
+    parser.add_argument("--server", default="wss://chameleon.omm.run")
     parser.add_argument("--room", default="test")
     return parser.parse_args()
 

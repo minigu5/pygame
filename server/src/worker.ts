@@ -20,6 +20,9 @@ export default {
         return new Response("bad room code", { status: 400 });
       }
       const id = env.ROOM.idFromName(code);
+      // No location hint: placement is fixed at creation, and letting it land
+      // near whoever opens the room beats guessing a region. A hint measured
+      // worse here, because this network reaches Cloudflare through LAX.
       return env.ROOM.get(id).fetch(request);
     }
 
