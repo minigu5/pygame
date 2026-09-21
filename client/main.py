@@ -9,6 +9,7 @@ import time
 import pygame
 
 from gamemap import GameMap, load_tuning
+from minimap import Minimap
 from net import Connection
 from physics import Physics
 from playerinput import InputBatcher, sample
@@ -46,6 +47,11 @@ def main() -> int:
     predictor = Predictor(physics, 1000 / tuning["tick_hz"])
     interpolator = Interpolator(1000 / tuning["snapshot_hz"])
     panel = PaintPanel(pygame.font.SysFont("menlo,monospace", 14), (210, 120, 90))
+    minimap = Minimap(
+        game_map,
+        pygame.font.SysFont("menlo,monospace", 12),
+        pygame.font.SysFont("applesdgothicneo,applegothic,arialunicode", 13),
+    )
     frozen = False
     caught = False
     cooldown_until = 0.0
@@ -71,6 +77,8 @@ def main() -> int:
                     predictor.body.frozen = frozen
                 if not frozen:
                     panel.eyedropper = False
+            elif event.type == pygame.KEYDOWN and event.key == pygame.K_m:
+                minimap.toggle()
             elif event.type == pygame.KEYDOWN and event.key == pygame.K_e and frozen:
                 panel.toggle_eyedropper()
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and frozen:
@@ -116,6 +124,7 @@ def main() -> int:
                 rtt_ms = now * 1000 - message["ts"]
             elif kind == "s":
                 me = message["me"]
+                minimap.note_visit(me["rm"])
                 predictor.reconcile(me, message["n"])
                 interpolator.push(message["o"])
             elif kind == "b":
@@ -159,6 +168,16 @@ def main() -> int:
             status.append(connection.error)
 
         renderer.draw(me["rm"] if me else None, drawn_me, others, status)
+        minimap.draw(
+            screen,
+            me["rm"] if me else None,
+            (
+                (drawn_me["x"] + tuning["player_width"] / 2, drawn_me["y"] + tuning["player_height"] / 2)
+                if drawn_me
+                else None
+            ),
+            show_visited=role == "hunter",
+        )
         if frozen:
             panel.draw(screen)
         pygame.display.flip()
