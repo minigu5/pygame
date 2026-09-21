@@ -28,19 +28,28 @@ npm install --prefix server
 
 ## 실행
 
-서버를 먼저 띄운다.
-
-```sh
-npm run dev --prefix server        # http://127.0.0.1:8787
-```
-
-클라이언트는 창 하나가 플레이어 한 명이다. 두 명이 필요하므로 터미널 두 개에서 각각 실행한다.
+서버는 `wss://chameleon.omm.run`에 배포되어 있다. 클라이언트는 창 하나가 플레이어 한 명이므로, 두 명이 같은 방 이름으로 접속한다.
 
 ```sh
 .venv/bin/python client/main.py --room test
 ```
 
-먼저 접속한 쪽이 헌터, 다음이 카멜레온이다. `--server`로 다른 주소를 쓸 수 있다.
+먼저 접속한 쪽이 헌터, 다음이 카멜레온이다. 방 이름은 서로 정해서 쓰면 된다.
+
+로컬 서버로 개발할 때는 이렇게 한다.
+
+```sh
+npm run dev --prefix server                                   # http://127.0.0.1:8787
+.venv/bin/python client/main.py --server ws://127.0.0.1:8787
+```
+
+## 배포
+
+```sh
+npx wrangler deploy --config server/wrangler.jsonc
+```
+
+Durable Object에는 위치 힌트를 주지 않는다. 배치는 객체가 처음 만들어질 때 정해지므로, 방을 여는 사람 근처에 잡히게 두는 편이 지역을 찍는 것보다 낫다.
 
 ## 조작
 
