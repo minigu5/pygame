@@ -1,0 +1,20 @@
+{
+  "tick_hz": 60,
+  "snapshot_hz": 20,
+  "input_hz": 15,
+  "input_batch": 4,
+
+  "gravity": 2000,
+  "move_speed": 200,
+  "jump_speed": -620,
+  "max_fall_speed": 900,
+  "player_width": 24,
+  "player_height": 32,
+
+  "coyote_ms": 100,
+  "jump_buffer_ms": 120,
+  "short_hop_factor": 0.5,
+
+  "accuse_radius": 24,
+  "accuse_cooldown_ms": 3000
+}

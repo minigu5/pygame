@@ -1,4 +1,4 @@
-"""Phase 0 client: connect to a room and show the round-trip time."""
+"""Client: sends input, draws whatever the server reports."""
 
 from __future__ import annotations
 
@@ -8,12 +8,12 @@ import time
 
 import pygame
 
+from gamemap import GameMap, load_tuning
 from net import Connection
+from playerinput import InputBatcher, sample
+from render import Renderer
 
 WIDTH, HEIGHT = 960, 540
-BACKGROUND = (24, 26, 32)
-TEXT = (226, 228, 234)
-DIM = (128, 132, 142)
 PING_INTERVAL = 1.0
 
 
@@ -26,19 +26,25 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    tuning = load_tuning()
+
     connection = Connection(f"{args.server}/ws?room={args.room}")
     connection.start()
 
     pygame.init()
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     pygame.display.set_caption("Meccha Chameleon 2D")
-    font = pygame.font.SysFont("menlo,monospace", 20)
     clock = pygame.time.Clock()
+
+    game_map = GameMap.load("map_test")
+    renderer = Renderer(screen, game_map, tuning)
+    batcher = InputBatcher(tuning["input_batch"])
 
     player_id = "-"
     role = "-"
     rtt_ms: float | None = None
-    peers: set[str] = set()
+    me: dict | None = None
+    others: list[dict] = []
     next_ping = 0.0
 
     running = True
@@ -50,9 +56,13 @@ def main() -> int:
                 running = False
 
         now = time.monotonic()
-        if connection.status == "connected" and now >= next_ping:
-            connection.send({"t": "ping", "ts": int(now * 1000)})
-            next_ping = now + PING_INTERVAL
+        if connection.status == "connected":
+            message = batcher.push(sample())
+            if message is not None:
+                connection.send(message)
+            if now >= next_ping:
+                connection.send({"t": "ping", "ts": int(now * 1000)})
+                next_ping = now + PING_INTERVAL
 
         for message in connection.poll():
             kind = message.get("t")
@@ -61,25 +71,27 @@ def main() -> int:
                 role = message["role"]
             elif kind == "pong":
                 rtt_ms = now * 1000 - message["ts"]
-            elif kind == "j":
-                peers.add(message["id"])
+            elif kind == "s":
+                me = message["me"]
+                others = message["o"]
             elif kind == "b":
-                peers.discard(message["id"])
+                others = [o for o in others if o["i"] != message["id"]]
 
-        lines = [
-            f"server   {args.server}  room={args.room}",
-            f"status   {connection.status}",
-            f"id       {player_id}   role {role}",
-            f"rtt      {'-' if rtt_ms is None else f'{rtt_ms:.0f} ms'}",
-            f"peers    {len(peers)}",
+        if me is not None:
+            renderer.follow(
+                me["x"] + tuning["player_width"] / 2,
+                me["y"] + tuning["player_height"] / 2,
+            )
+
+        status = [
+            f"{role}  id {player_id}  {connection.status}",
+            f"rtt {'-' if rtt_ms is None else f'{rtt_ms:.0f}ms'}  room {me['rm'] if me else '-'}",
+            f"pos {me['x'] if me else '-'},{me['y'] if me else '-'}  peers {len(others)}",
         ]
         if connection.error:
-            lines.append(f"error    {connection.error}")
+            status.append(connection.error)
 
-        screen.fill(BACKGROUND)
-        for index, line in enumerate(lines):
-            color = TEXT if index < 5 else DIM
-            screen.blit(font.render(line, True, color), (40, 40 + index * 28))
+        renderer.draw(me, others, status)
         pygame.display.flip()
         clock.tick(60)
 
