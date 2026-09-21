@@ -73,7 +73,7 @@ export class RoomDO implements DurableObject {
       id: player.id,
       role: player.role,
       tick: this.tick,
-      map: "map_test",
+      map: "map_01",
     });
     this.broadcast({ t: "j", id: player.id, role: player.role }, player.id);
     this.startTicking();
@@ -138,7 +138,7 @@ export class RoomDO implements DurableObject {
         // message.n numbers the first frame in the batch; the client replays
         // everything after the frame the snapshot acknowledges.
         message.k.forEach((mask, index) =>
-          player.pending.push({ n: message.n + index, mask: mask & 7 }),
+          player.pending.push({ n: message.n + index, mask: mask & 31 }),
         );
         break;
       }

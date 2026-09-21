@@ -7,6 +7,8 @@ import pygame
 LEFT = 1
 RIGHT = 2
 JUMP = 4
+UP = 8
+DOWN = 16
 
 
 def sample() -> int:
@@ -16,8 +18,12 @@ def sample() -> int:
         mask |= LEFT
     if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
         mask |= RIGHT
-    if keys[pygame.K_SPACE] or keys[pygame.K_UP] or keys[pygame.K_w]:
+    if keys[pygame.K_SPACE]:
         mask |= JUMP
+    if keys[pygame.K_UP] or keys[pygame.K_w]:
+        mask |= UP
+    if keys[pygame.K_DOWN] or keys[pygame.K_s]:
+        mask |= DOWN
     return mask
 
 
