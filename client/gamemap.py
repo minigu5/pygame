@@ -86,13 +86,14 @@ class GameMap:
 
 # Outside the room the structure has to stay readable while the wallpaper
 # colours do not, so walls and floors keep a brighter grey than the rest.
-DIM_FACTOR = 0.40
-SOLID_LIFT = 42
+DIM_FACTOR = 0.45
+DIM_BASE = 18
+SOLID_LIFT = 58
 
 
 def _drain(color: list[int], solid: bool) -> tuple[int, int, int]:
     luminance = 0.299 * color[0] + 0.587 * color[1] + 0.114 * color[2]
-    value = luminance * DIM_FACTOR + (SOLID_LIFT if solid else 0)
+    value = luminance * DIM_FACTOR + DIM_BASE + (SOLID_LIFT if solid else 0)
     level = max(0, min(255, int(value)))
     return (level, level, level)
 

@@ -1,8 +1,10 @@
-import { isSolidTile, map, tuning } from "./map";
+import { isLadderAt, isSolidTile, map, tuning } from "./map";
 
 export const LEFT = 1;
 export const RIGHT = 2;
 export const JUMP = 4;
+export const UP = 8;
+export const DOWN = 16;
 
 export type Body = {
   x: number;
@@ -10,6 +12,7 @@ export type Body = {
   vx: number;
   vy: number;
   onGround: boolean;
+  onLadder: boolean;
   frozen: boolean;
   coyoteMs: number;
   jumpBufferMs: number;
@@ -23,6 +26,7 @@ export function spawnBody(at: [number, number]): Body {
     vx: 0,
     vy: 0,
     onGround: false,
+    onLadder: false,
     frozen: false,
     coyoteMs: 0,
     jumpBufferMs: 0,
@@ -40,6 +44,22 @@ export function step(body: Body, mask: number, dtMs: number): void {
 
   const dt = dtMs / 1000;
   const wantsJump = (mask & JUMP) !== 0;
+
+  // A ladder suspends gravity while the body is on it; jumping lets go.
+  body.onLadder =
+    isLadderAt(body.x + tuning.player_width / 2, body.y + tuning.player_height / 2) &&
+    !wantsJump;
+  if (body.onLadder) {
+    body.jumpHeld = wantsJump;
+    const climb = ((mask & DOWN) !== 0 ? 1 : 0) - ((mask & UP) !== 0 ? 1 : 0);
+    body.vy = climb * tuning.climb_speed;
+    body.vx =
+      (((mask & RIGHT) !== 0 ? 1 : 0) - ((mask & LEFT) !== 0 ? 1 : 0)) * tuning.move_speed;
+    moveX(body, body.vx * dt);
+    body.onGround = moveY(body, body.vy * dt);
+    body.coyoteMs = tuning.coyote_ms;
+    return;
+  }
 
   body.jumpBufferMs = wantsJump && !body.jumpHeld ? tuning.jump_buffer_ms : Math.max(0, body.jumpBufferMs - dtMs);
 
@@ -90,6 +110,18 @@ function moveX(body: Body, delta: number): void {
   if (!overlaps(target, body.y)) {
     body.x = target;
     return;
+  }
+
+  // A stair is one tile high, so walking into one should climb it rather
+  // than stop dead. Only from the ground, so it cannot be used mid-jump.
+  if (body.onGround) {
+    for (let lift = 1; lift <= tuning.step_height; lift++) {
+      if (!overlaps(target, body.y - lift)) {
+        body.x = target;
+        body.y -= lift;
+        return;
+      }
+    }
   }
 
   // Walk up to the wall one pixel at a time so the body ends up flush with it.

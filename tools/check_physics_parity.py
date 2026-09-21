@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import time
 from pathlib import Path
 
 from websockets.asyncio.client import connect
@@ -22,11 +23,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "client"))
 from gamemap import GameMap, load_tuning  # noqa: E402
 from physics import Body, Physics  # noqa: E402
 
-RIGHT, JUMP = 2, 4
+RIGHT, JUMP, UP = 2, 4, 8
 BATCH = 4
 TOLERANCE_PX = 1.0
 
-FRAMES = [RIGHT] * 90 + [RIGHT | JUMP] * 20 + [JUMP] * 10 + [0] * 120
+# Walk the length of the ground floor, climb the ladder, then let go. The
+# ladder rules are duplicated on both sides too, so the route covers them.
+FRAMES = (
+    [RIGHT] * 90
+    + [RIGHT | JUMP] * 20
+    + [JUMP] * 10
+    + [RIGHT] * 755
+    + [UP] * 240
+    + [0] * 120
+)
 
 
 async def run_on_server(base: str) -> dict:
@@ -41,12 +51,18 @@ async def run_on_server(base: str) -> dict:
                 json.dumps({"t": "i", "n": start + 1, "k": FRAMES[start : start + BATCH]})
             )
 
-        await asyncio.sleep(len(FRAMES) / 60 + 1.0)
+        await asyncio.sleep(len(FRAMES) / 60 + 1.5)
 
+        # Snapshots never stop arriving, so collect for a fixed window rather
+        # than waiting for a gap that never comes.
         newest = None
+        deadline = time.monotonic() + 0.5
         while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
             try:
-                message = json.loads(await asyncio.wait_for(socket.recv(), 0.2))
+                message = json.loads(await asyncio.wait_for(socket.recv(), remaining))
             except (TimeoutError, asyncio.TimeoutError):
                 break
             if message.get("t") == "s":
@@ -66,7 +82,7 @@ def run_locally(game_map: GameMap, tuning: dict) -> Body:
 
 async def main(base: str) -> int:
     tuning = load_tuning()
-    game_map = GameMap.load("map_test")
+    game_map = GameMap.load("map_01")
 
     server = await run_on_server(base)
     local = run_locally(game_map, tuning)
@@ -78,6 +94,9 @@ async def main(base: str) -> int:
     print(f"server  x={server['x']:.1f} y={server['y']:.1f} grounded={server['g']}")
     print(f"client  x={local.x:.1f} y={local.y:.1f} grounded={local.on_ground}")
     print(f"delta   dx={dx:.2f} dy={dy:.2f}  tolerance {TOLERANCE_PX}px")
+    climbed = local.y < 1600
+    print(f"ladder  {'exercised' if climbed else 'NOT exercised - route missed it'}")
+    ok = ok and climbed
     print("PASS  client prediction matches the server" if ok else "FAIL  physics drifted")
     return 0 if ok else 1
 

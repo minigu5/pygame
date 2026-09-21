@@ -39,7 +39,7 @@ def main() -> int:
     pygame.display.set_caption("Meccha Chameleon 2D")
     clock = pygame.time.Clock()
 
-    game_map = GameMap.load("map_test")
+    game_map = GameMap.load("map_01")
     renderer = Renderer(screen, game_map, tuning)
     batcher = InputBatcher(tuning["input_batch"])
     physics = Physics(game_map, tuning)

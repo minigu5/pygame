@@ -1,10 +1,11 @@
-import mapData from "../../shared/map_test.json";
+import mapData from "../../shared/map_01.json";
 import tuningData from "../../shared/tuning.json";
 
 export type PaletteEntry = {
   name: string;
   color: [number, number, number] | null;
   solid: boolean;
+  ladder?: boolean;
 };
 
 export type Room = {
@@ -32,11 +33,22 @@ export const map = mapData as unknown as GameMap;
 export const tuning: Tuning = tuningData;
 
 const solidByIndex = map.palette.map((entry) => entry.solid);
+const ladderByIndex = map.palette.map((entry) => entry.ladder === true);
 
 export function isSolidTile(col: number, row: number): boolean {
   const [width, height] = map.size;
   if (col < 0 || row < 0 || col >= width || row >= height) return true;
   return solidByIndex[map.solid[row][col]] ?? false;
+}
+
+/** True when the point sits on a ladder tile. */
+export function isLadderAt(x: number, y: number): boolean {
+  const size = map.tile_size;
+  const col = Math.floor(x / size);
+  const row = Math.floor(y / size);
+  const [width, height] = map.size;
+  if (col < 0 || row < 0 || col >= width || row >= height) return false;
+  return ladderByIndex[map.fg[row][col]] ?? false;
 }
 
 // The room whose rect contains the point, or null in the gaps between rooms.
