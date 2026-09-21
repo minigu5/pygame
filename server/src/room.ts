@@ -99,6 +99,19 @@ export class RoomDO implements DurableObject {
       case "ping":
         this.send(player, { t: "pong", ts: message.ts });
         break;
+      case "f":
+        if (player.role !== "chameleon") break;
+        player.body.frozen = message.v;
+        break;
+      case "p": {
+        if (player.role !== "chameleon") break;
+        const channels = message.c;
+        if (!Array.isArray(channels) || channels.length !== 3) break;
+        player.color = channels.map((value) =>
+          Math.max(0, Math.min(255, Math.round(value))),
+        ) as [number, number, number];
+        break;
+      }
       case "i": {
         if (player.role === "spectator") break;
         // message.n numbers the first frame in the batch; the client replays

@@ -125,6 +125,42 @@ async def main(base: str) -> int:
                 str(snapshot["o"]),
             )
 
+            await second.send(json.dumps({"t": "p", "c": [10, 200, 30]}))
+            await asyncio.sleep(0.2)
+            painted = await latest_snapshot(first)
+            check(
+                "painting reaches the other client",
+                any(o["c"] == [10, 200, 30] for o in painted["o"]),
+                str(painted["o"]),
+            )
+
+            resting_second = await latest_snapshot(second)
+            await second.send(json.dumps({"t": "f", "v": True}))
+            await asyncio.sleep(0.1)
+            held = await hold(second, RIGHT, batches=8)
+            check(
+                "freezing pins the chameleon in place",
+                held["me"]["fz"] is True and held["me"]["x"] == resting_second["me"]["x"],
+                f"{resting_second['me']['x']} -> {held['me']['x']}",
+            )
+
+            await second.send(json.dumps({"t": "f", "v": False}))
+            await asyncio.sleep(0.1)
+            released = await hold(second, RIGHT, batches=8)
+            check(
+                "unfreezing lets it move again",
+                released["me"]["fz"] is False and released["me"]["x"] > held["me"]["x"],
+                f"{held['me']['x']} -> {released['me']['x']}",
+            )
+
+            await first.send(json.dumps({"t": "f", "v": True}))
+            await asyncio.sleep(0.2)
+            hunter_state = await latest_snapshot(first)
+            check(
+                "hunters cannot freeze",
+                hunter_state["me"]["fz"] is False,
+            )
+
             wall = await hold(first, LEFT, batches=40)
             check(
                 "walls stop movement",
