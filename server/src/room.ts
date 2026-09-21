@@ -19,6 +19,8 @@ type Player = {
   color: [number, number, number];
   caught: boolean;
   room: string | null;
+  watching: string | null;
+  accuseReadyAt: number;
   pending: { n: number; mask: number }[];
   lastMask: number;
   coastTicks: number;
@@ -53,6 +55,8 @@ export class RoomDO implements DurableObject {
       color: [...DEFAULT_COLOR],
       caught: false,
       room: null,
+      watching: null,
+      accuseReadyAt: 0,
       pending: [],
       lastMask: 0,
       coastTicks: 0,
@@ -110,6 +114,23 @@ export class RoomDO implements DurableObject {
         player.color = channels.map((value) =>
           Math.max(0, Math.min(255, Math.round(value))),
         ) as [number, number, number];
+        break;
+      }
+      case "a": {
+        if (player.role !== "hunter" || player.caught) break;
+        const now = Date.now();
+        if (now < player.accuseReadyAt) break;
+        const hit = this.chameleonAt(message.x, message.y);
+        if (hit) {
+          hit.caught = true;
+          hit.body.frozen = true;
+          hit.role = "spectator";
+          hit.watching = player.id;
+          this.broadcast({ t: "c", id: hit.id, by: player.id });
+        } else {
+          player.accuseReadyAt = now + tuning.accuse_cooldown_ms;
+          this.send(player, { t: "cd", until: player.accuseReadyAt });
+        }
         break;
       }
       case "i": {
@@ -170,11 +191,37 @@ export class RoomDO implements DurableObject {
     if (this.tick % SNAPSHOT_EVERY === 0) this.sendSnapshots();
   }
 
+  /** The chameleon whose body covers the accused point, if any. */
+  private chameleonAt(x: number, y: number): Player | null {
+    const radius = tuning.accuse_radius;
+    for (const player of this.players.values()) {
+      if (player.caught || player.role !== "chameleon") continue;
+      const centreX = player.body.x + tuning.player_width / 2;
+      const centreY = player.body.y + tuning.player_height / 2;
+      const halfWidth = tuning.player_width / 2 + radius;
+      const halfHeight = tuning.player_height / 2 + radius;
+      if (Math.abs(x - centreX) <= halfWidth && Math.abs(y - centreY) <= halfHeight) {
+        return player;
+      }
+    }
+    return null;
+  }
+
+  /** Whose eyes a client sees through: its own, or the hunter it watches. */
+  private viewpoint(player: Player): Player {
+    if (player.role !== "spectator" || player.watching === null) return player;
+    return this.players.get(player.watching) ?? player;
+  }
+
   private sendSnapshots(): void {
     for (const player of this.players.values()) {
+      const eyes = this.viewpoint(player);
       const others = [];
       for (const other of this.players.values()) {
-        if (other.id === player.id || other.role === "spectator") continue;
+        if (other.id === eyes.id || other.caught) continue;
+        // Filtering by room, not by viewport: a player in another room is
+        // never sent, so a modified client cannot reveal one.
+        if (other.room !== eyes.room) continue;
         others.push({
           i: other.id,
           x: Math.round(other.body.x),
@@ -188,13 +235,13 @@ export class RoomDO implements DurableObject {
         t: "s",
         n: player.ackInput,
         me: {
-          x: Math.round(player.body.x),
-          y: Math.round(player.body.y),
-          vy: Math.round(player.body.vy),
-          g: player.body.onGround,
-          fz: player.body.frozen,
-          rm: player.room,
-          c: player.color,
+          x: Math.round(eyes.body.x),
+          y: Math.round(eyes.body.y),
+          vy: Math.round(eyes.body.vy),
+          g: eyes.body.onGround,
+          fz: eyes.body.frozen,
+          rm: eyes.room,
+          c: eyes.color,
         },
         o: others,
       });

@@ -37,6 +37,9 @@ async def recv_kind(socket, kind: str, timeout: float = 3.0) -> dict:
     raise TimeoutError(f"no {kind!r} message within {timeout}s")
 
 
+_cooldown_seen = False
+
+
 async def latest_snapshot(socket) -> dict:
     """Snapshots stream at 20Hz, so drain the backlog and keep the newest."""
     newest = await recv_kind(socket, "s")
@@ -47,6 +50,8 @@ async def latest_snapshot(socket) -> dict:
             return newest
         if message.get("t") == "s":
             newest = message
+        elif message.get("t") == "cd":
+            globals()["_cooldown_seen"] = True
 
 
 _next_frame = 1
@@ -81,27 +86,25 @@ async def main(base: str) -> int:
             pong = await recv_kind(second, "pong")
             check("ping round trip", pong.get("ts") == 12345)
 
-            resting = await latest_snapshot(first)
-            start = resting["me"]
+            # --- physics ---------------------------------------------------
+            start = (await latest_snapshot(first))["me"]
             check("snapshot carries my position", "x" in start and "y" in start, str(start))
             check("spawn lands on the floor", start["g"] is True, f"y={start['y']}")
 
-            after_right = await hold(first, RIGHT, batches=8)
+            wall = await hold(first, LEFT, batches=20)
+            check("walls stop movement", wall["me"]["x"] <= 34, f"x={wall['me']['x']}")
+
+            walked = await hold(first, RIGHT, batches=8)
             check(
                 "holding right moves right",
-                after_right["me"]["x"] > start["x"],
-                f"{start['x']} -> {after_right['me']['x']}",
+                walked["me"]["x"] > wall["me"]["x"],
+                f"{wall['me']['x']} -> {walked['me']['x']}",
             )
-            check(
-                "walking stays on the floor",
-                after_right["me"]["y"] == start["y"],
-                f"y={after_right['me']['y']}",
-            )
-
+            check("walking stays on the floor", walked["me"]["y"] == start["y"])
             check(
                 "snapshot acknowledges an applied input frame",
-                0 < after_right["n"] < _next_frame,
-                f"n={after_right['n']}",
+                0 < walked["n"] < _next_frame,
+                f"n={walked['n']}",
             )
 
             airborne = await hold(first, JUMP, batches=3)
@@ -110,21 +113,34 @@ async def main(base: str) -> int:
                 airborne["me"]["y"] < start["y"],
                 f"{start['y']} -> {airborne['me']['y']}",
             )
-
             landed = await hold(first, 0, batches=20)
             check(
                 "gravity brings me back down",
                 landed["me"]["y"] == start["y"] and landed["me"]["g"] is True,
-                f"y={landed['me']['y']}",
             )
 
-            snapshot = await latest_snapshot(second)
+            # --- rooms gate visibility -------------------------------------
+            apart = await latest_snapshot(first)
             check(
-                "each client sees the other",
-                any(o["i"] == hello_first["id"] for o in snapshot["o"]),
-                str(snapshot["o"]),
+                "players in different rooms are not sent",
+                apart["me"]["rm"] != (await latest_snapshot(second))["me"]["rm"]
+                and apart["o"] == [],
+                f"hunter in {apart['me']['rm']}, sees {len(apart['o'])}",
             )
 
+            together = await hold(first, RIGHT, batches=70)
+            check(
+                "the hunter reaches the next room",
+                together["me"]["rm"] == "1F-kitchen",
+                f"rm={together['me']['rm']} x={together['me']['x']}",
+            )
+            check(
+                "same room means each client sees the other",
+                any(o["i"] == hello_second["id"] for o in together["o"]),
+                str(together["o"]),
+            )
+
+            # --- painting ---------------------------------------------------
             await second.send(json.dumps({"t": "p", "c": [10, 200, 30]}))
             await asyncio.sleep(0.2)
             painted = await latest_snapshot(first)
@@ -134,14 +150,15 @@ async def main(base: str) -> int:
                 str(painted["o"]),
             )
 
-            resting_second = await latest_snapshot(second)
+            # --- freezing ---------------------------------------------------
+            resting = await latest_snapshot(second)
             await second.send(json.dumps({"t": "f", "v": True}))
             await asyncio.sleep(0.1)
             held = await hold(second, RIGHT, batches=8)
             check(
                 "freezing pins the chameleon in place",
-                held["me"]["fz"] is True and held["me"]["x"] == resting_second["me"]["x"],
-                f"{resting_second['me']['x']} -> {held['me']['x']}",
+                held["me"]["fz"] is True and held["me"]["x"] == resting["me"]["x"],
+                f"{resting['me']['x']} -> {held['me']['x']}",
             )
 
             await second.send(json.dumps({"t": "f", "v": False}))
@@ -150,22 +167,40 @@ async def main(base: str) -> int:
             check(
                 "unfreezing lets it move again",
                 released["me"]["fz"] is False and released["me"]["x"] > held["me"]["x"],
-                f"{held['me']['x']} -> {released['me']['x']}",
             )
 
             await first.send(json.dumps({"t": "f", "v": True}))
             await asyncio.sleep(0.2)
-            hunter_state = await latest_snapshot(first)
+            check("hunters cannot freeze", (await latest_snapshot(first))["me"]["fz"] is False)
+
+            # --- accusing ----------------------------------------------------
+            await first.send(json.dumps({"t": "a", "x": 0, "y": 0}))
+            cooldown = await recv_kind(first, "cd")
+            check("missing puts the hunter on cooldown", "until" in cooldown, str(cooldown))
+
+            blocked = (await latest_snapshot(second))["me"]
+            await first.send(json.dumps({"t": "a", "x": blocked["x"] + 12, "y": blocked["y"] + 16}))
+            await asyncio.sleep(0.3)
             check(
-                "hunters cannot freeze",
-                hunter_state["me"]["fz"] is False,
+                "accusing during the cooldown does nothing",
+                (await latest_snapshot(second))["me"]["fz"] is False,
             )
 
-            wall = await hold(first, LEFT, batches=40)
+            await asyncio.sleep(3.0)
+            target = (await latest_snapshot(second))["me"]
+            await first.send(json.dumps({"t": "a", "x": target["x"] + 12, "y": target["y"] + 16}))
+            caught = await recv_kind(second, "c")
             check(
-                "walls stop movement",
-                wall["me"]["x"] >= 32,
-                f"x={wall['me']['x']}",
+                "accusing the chameleon's own position catches it",
+                caught.get("id") == hello_second.get("id"),
+                str(caught),
+            )
+
+            spectating = await latest_snapshot(second)
+            check(
+                "a caught player watches through the hunter",
+                abs(spectating["me"]["x"] - (await latest_snapshot(first))["me"]["x"]) <= 2,
+                f"sees x={spectating['me']['x']}",
             )
 
         left = await recv_kind(first, "b")

@@ -20,6 +20,8 @@ export type ServerMessage =
   | { t: "hello"; id: string; role: Role; tick: number; map: string }
   | { t: "j"; id: string; role: Role }
   | { t: "b"; id: string }
+  | { t: "c"; id: string; by: string }
+  | { t: "cd"; until: number }
   | {
       t: "s";
       n: number;
