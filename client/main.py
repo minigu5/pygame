@@ -9,6 +9,7 @@ import time
 import pygame
 
 from gamemap import GameMap, load_tuning
+from hud import Hud
 from minimap import Minimap
 from net import Connection
 from physics import Physics
@@ -52,9 +53,14 @@ def main() -> int:
         pygame.font.SysFont("menlo,monospace", 12),
         pygame.font.SysFont("applesdgothicneo,applegothic,arialunicode", 13),
     )
+    hud = Hud()
     frozen = False
     caught = False
     cooldown_until = 0.0
+    phase = "waiting"
+    seconds_left = 0
+    round_number = 0
+    winner: str | None = None
 
     player_id = "-"
     role = "-"
@@ -70,7 +76,12 @@ def main() -> int:
                 running = False
             elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 running = False
-            elif event.type == pygame.KEYDOWN and event.key == pygame.K_TAB and role == "chameleon":
+            elif (
+                event.type == pygame.KEYDOWN
+                and event.key == pygame.K_TAB
+                and role == "chameleon"
+                and not caught
+            ):
                 frozen = not frozen
                 connection.send({"t": "f", "v": frozen})
                 if predictor.body is not None:
@@ -102,7 +113,9 @@ def main() -> int:
 
         now = time.monotonic()
         if connection.status == "connected":
-            mask = 0 if frozen else sample()
+            blind = phase == "hiding" and role == "hunter"
+            idle = blind or phase in ("waiting", "result") or caught
+            mask = 0 if frozen or idle else sample()
             frame, message = batcher.push(mask)
             predictor.record(frame, mask)
             predictor.advance(mask)
@@ -124,6 +137,19 @@ def main() -> int:
                 rtt_ms = now * 1000 - message["ts"]
             elif kind == "s":
                 me = message["me"]
+                if message["rd"] != round_number:
+                    # New round: roles are dealt again and nothing carries over.
+                    round_number = message["rd"]
+                    frozen = False
+                    panel.eyedropper = False
+                    minimap.visited.clear()
+                    predictor.body = None
+                    predictor.history.clear()
+                phase = message["ph"]
+                seconds_left = message["left"]
+                winner = message.get("win")
+                role = me["rl"]
+                caught = me["ct"]
                 minimap.note_visit(me["rm"])
                 predictor.reconcile(me, message["n"])
                 interpolator.push(message["o"])
@@ -132,8 +158,6 @@ def main() -> int:
             elif kind == "c":
                 interpolator.drop(message["id"])
                 if message["id"] == player_id:
-                    caught = True
-                    role = "spectator"
                     frozen = False
             elif kind == "cd":
                 # The server's timestamp is wall clock; only the length matters.
@@ -168,6 +192,14 @@ def main() -> int:
             status.append(connection.error)
 
         renderer.draw(me["rm"] if me else None, drawn_me, others, status)
+        hud.draw(
+            screen,
+            phase,
+            seconds_left,
+            round_number,
+            winner,
+            blind=phase == "hiding" and role == "hunter",
+        )
         minimap.draw(
             screen,
             me["rm"] if me else None,

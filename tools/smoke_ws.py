@@ -40,6 +40,15 @@ async def recv_kind(socket, kind: str, timeout: float = 3.0) -> dict:
 COLLECT_SECONDS = 0.3
 
 
+async def wait_for_phase(socket, phase: str, timeout: float = 20.0) -> dict:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        message = await recv_kind(socket, "s", deadline - time.monotonic())
+        if message["ph"] == phase:
+            return message
+    raise TimeoutError(f"room never reached {phase!r}")
+
+
 async def latest_snapshot(socket) -> dict:
     """Snapshots stream at 20Hz, so collect briefly and keep the newest.
 
@@ -74,19 +83,26 @@ async def hold(socket, mask: int, batches: int, batch_size: int = 4) -> dict:
 
 
 async def main(base: str) -> int:
-    url = f"{base}/ws?room=smoke-{int(time.time())}"
+    # Short phases so the checks do not sit through a real 60 second hide.
+    url = f"{base}/ws?room=smoke-{int(time.time())}&hide=5&seek=600&result=2"
 
     async with connect(url) as first:
         hello_first = await recv(first)
         check("first client gets hello", hello_first.get("t") == "hello", str(hello_first))
-        check("first client hunts", hello_first.get("role") == "hunter")
 
         async with connect(url) as second:
             hello_second = await recv(second)
-            check("second client hides", hello_second.get("role") == "chameleon")
-
             joined = await recv_kind(first, "j")
             check("first client sees the join", joined.get("id") == hello_second.get("id"))
+
+            # Roles are dealt when the round starts, not when a client connects.
+            await wait_for_phase(first, "seeking")
+            await wait_for_phase(second, "seeking")
+            check(
+                "the first player hunts and the second hides",
+                (await latest_snapshot(first))["me"]["rl"] == "hunter"
+                and (await latest_snapshot(second))["me"]["rl"] == "chameleon",
+            )
 
             await second.send(json.dumps({"t": "ping", "ts": 12345}))
             pong = await recv_kind(second, "pong")
