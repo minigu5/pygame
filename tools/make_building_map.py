@@ -39,6 +39,14 @@ PALETTE = [
     {"name": "art-room", "color": [132, 96, 112], "solid": False},
     {"name": "music-room", "color": [78, 70, 122], "solid": False},
     {"name": "attic", "color": [104, 88, 66], "solid": False},
+    {"name": "pantry", "color": [110, 96, 58], "solid": False},
+    {"name": "nursery", "color": [126, 94, 118], "solid": False},
+    {"name": "archive", "color": [82, 82, 96], "solid": False},
+    {"name": "darkroom", "color": [58, 54, 62], "solid": False},
+    {"name": "workshop", "color": [92, 82, 70], "solid": False},
+    {"name": "tank-room", "color": [64, 100, 106], "solid": False},
+    {"name": "junk-room", "color": [100, 84, 78], "solid": False},
+    {"name": "roof-door", "color": [86, 98, 84], "solid": False},
     {"name": "stairwell", "color": [58, 62, 72], "solid": False},
     {"name": "ladder", "color": [168, 132, 72], "solid": False, "ladder": True},
 ]
@@ -47,12 +55,41 @@ INDEX = {entry["name"]: number for number, entry in enumerate(PALETTE)}
 CONCRETE, PLANK = INDEX["concrete"], INDEX["plank"]
 
 # floor number -> rooms on it, as (id, display name, wallpaper, width in tiles)
+#
+# Widths are kept near twenty tiles. The camera frames a whole room, so a wide
+# room has to zoom out, and a room twice the width of another makes the player
+# half the size in it — which matters when the game is won by judging colour.
 LAYOUT: dict[int, list[tuple[str, str, str, int]]] = {
-    1: [("1F-lobby", "로비", "lobby-tile", 38), ("1F-kitchen", "주방", "kitchen-tile", 30), ("1F-store", "창고", "storeroom", 22)],
-    2: [("2F-bedroom", "침실", "bedroom", 42), ("2F-living", "거실", "living-room", 48)],
-    3: [("3F-library", "도서관", "library", 34), ("3F-office", "사무실", "office", 34), ("3F-washroom", "화장실", "washroom", 22)],
-    4: [("4F-art", "미술실", "art-room", 46), ("4F-music", "음악실", "music-room", 44)],
-    5: [("5F-attic", "옥탑 다락방", "attic", 90)],
+    1: [
+        ("1F-lobby", "로비", "lobby-tile", 24),
+        ("1F-kitchen", "주방", "kitchen-tile", 22),
+        ("1F-pantry", "식료품실", "pantry", 20),
+        ("1F-store", "창고", "storeroom", 20),
+    ],
+    2: [
+        ("2F-bedroom", "침실", "bedroom", 22),
+        ("2F-nursery", "아이방", "nursery", 20),
+        ("2F-living", "거실", "living-room", 24),
+        ("2F-bath", "욕실", "washroom", 20),
+    ],
+    3: [
+        ("3F-library", "도서관", "library", 22),
+        ("3F-office", "사무실", "office", 22),
+        ("3F-archive", "자료실", "archive", 22),
+        ("3F-washroom", "화장실", "washroom", 20),
+    ],
+    4: [
+        ("4F-art", "미술실", "art-room", 24),
+        ("4F-music", "음악실", "music-room", 22),
+        ("4F-darkroom", "암실", "darkroom", 20),
+        ("4F-workshop", "공작실", "workshop", 20),
+    ],
+    5: [
+        ("5F-attic", "다락방", "attic", 24),
+        ("5F-tank", "물탱크실", "tank-room", 20),
+        ("5F-junk", "잡동사니방", "junk-room", 22),
+        ("5F-roof", "옥상 출입구", "roof-door", 20),
+    ],
 }
 
 

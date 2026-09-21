@@ -47,7 +47,7 @@ def main() -> int:
 
     check(
         "every room is on the plan",
-        len(game_map.rooms) == 16,
+        len(game_map.rooms) == 25,
         f"{len(game_map.rooms)} rooms",
     )
 

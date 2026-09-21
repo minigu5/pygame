@@ -150,7 +150,7 @@ async def main(base: str) -> int:
                 f"hunter in {apart['me']['rm']}, sees {len(apart['o'])}",
             )
 
-            together = await hold(first, RIGHT, batches=115)
+            together = await hold(first, RIGHT, batches=75)
             check(
                 "the hunter reaches the next room",
                 together["me"]["rm"] == "1F-kitchen",
