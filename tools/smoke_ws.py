@@ -49,10 +49,15 @@ async def latest_snapshot(socket) -> dict:
             newest = message
 
 
+_next_frame = 1
+
+
 async def hold(socket, mask: int, batches: int, batch_size: int = 4) -> dict:
     """Send `batches` input packets of a held key and return the newest snapshot."""
-    for sequence in range(1, batches + 1):
-        await socket.send(json.dumps({"t": "i", "n": sequence, "k": [mask] * batch_size}))
+    global _next_frame
+    for _ in range(batches):
+        await socket.send(json.dumps({"t": "i", "n": _next_frame, "k": [mask] * batch_size}))
+        _next_frame += batch_size
         await asyncio.sleep(batch_size / 60)
     return await latest_snapshot(socket)
 
@@ -91,6 +96,12 @@ async def main(base: str) -> int:
                 "walking stays on the floor",
                 after_right["me"]["y"] == start["y"],
                 f"y={after_right['me']['y']}",
+            )
+
+            check(
+                "snapshot acknowledges an applied input frame",
+                0 < after_right["n"] < _next_frame,
+                f"n={after_right['n']}",
             )
 
             airborne = await hold(first, JUMP, batches=3)

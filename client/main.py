@@ -10,7 +10,9 @@ import pygame
 
 from gamemap import GameMap, load_tuning
 from net import Connection
+from physics import Physics
 from playerinput import InputBatcher, sample
+from predict import Interpolator, Predictor
 from render import Renderer
 
 WIDTH, HEIGHT = 960, 540
@@ -39,6 +41,9 @@ def main() -> int:
     game_map = GameMap.load("map_test")
     renderer = Renderer(screen, game_map, tuning)
     batcher = InputBatcher(tuning["input_batch"])
+    physics = Physics(game_map, tuning)
+    predictor = Predictor(physics, 1000 / tuning["tick_hz"])
+    interpolator = Interpolator(1000 / tuning["snapshot_hz"])
 
     player_id = "-"
     role = "-"
@@ -57,7 +62,10 @@ def main() -> int:
 
         now = time.monotonic()
         if connection.status == "connected":
-            message = batcher.push(sample())
+            mask = sample()
+            frame, message = batcher.push(mask)
+            predictor.record(frame, mask)
+            predictor.advance(mask)
             if message is not None:
                 connection.send(message)
             if now >= next_ping:
@@ -73,25 +81,31 @@ def main() -> int:
                 rtt_ms = now * 1000 - message["ts"]
             elif kind == "s":
                 me = message["me"]
-                others = message["o"]
+                predictor.reconcile(me, message["n"])
+                interpolator.push(message["o"])
             elif kind == "b":
-                others = [o for o in others if o["i"] != message["id"]]
+                interpolator.drop(message["id"])
 
+        others = interpolator.at_now()
+        drawn_me = None
         if me is not None:
+            x, y = predictor.render_position()
+            drawn_me = {"x": x, "y": y, "c": me["c"], "rm": me["rm"]}
             renderer.follow(
-                me["x"] + tuning["player_width"] / 2,
-                me["y"] + tuning["player_height"] / 2,
+                x + tuning["player_width"] / 2,
+                y + tuning["player_height"] / 2,
             )
 
         status = [
             f"{role}  id {player_id}  {connection.status}",
             f"rtt {'-' if rtt_ms is None else f'{rtt_ms:.0f}ms'}  room {me['rm'] if me else '-'}",
-            f"pos {me['x'] if me else '-'},{me['y'] if me else '-'}  peers {len(others)}",
+            f"pos {drawn_me['x']:.0f},{drawn_me['y']:.0f}" if drawn_me else "pos -",
+            f"unacked {len(predictor.history)}  peers {len(others)}",
         ]
         if connection.error:
             status.append(connection.error)
 
-        renderer.draw(me, others, status)
+        renderer.draw(drawn_me, others, status)
         pygame.display.flip()
         clock.tick(60)
 

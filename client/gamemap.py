@@ -25,9 +25,21 @@ class GameMap:
         self.pixel_width = self.width * self.tile_size
         self.pixel_height = self.height * self.tile_size
 
-        # World layers are drawn once; each frame blits a slice of them.
-        self.world = self._render_layers((self.bg, self.solid))
-        self.foreground = self._render_layers((self.fg,))
+        # Built on first use so that physics-only callers need no video mode.
+        self._world: pygame.Surface | None = None
+        self._foreground: pygame.Surface | None = None
+
+    @property
+    def world(self) -> pygame.Surface:
+        if self._world is None:
+            self._world = self._render_layers((self.bg, self.solid))
+        return self._world
+
+    @property
+    def foreground(self) -> pygame.Surface:
+        if self._foreground is None:
+            self._foreground = self._render_layers((self.fg,))
+        return self._foreground
 
     @classmethod
     def load(cls, name: str) -> "GameMap":

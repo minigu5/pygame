@@ -19,7 +19,7 @@ type Player = {
   color: [number, number, number];
   caught: boolean;
   room: string | null;
-  pending: number[];
+  pending: { n: number; mask: number }[];
   lastMask: number;
   coastTicks: number;
   ackInput: number;
@@ -99,11 +99,15 @@ export class RoomDO implements DurableObject {
       case "ping":
         this.send(player, { t: "pong", ts: message.ts });
         break;
-      case "i":
+      case "i": {
         if (player.role === "spectator") break;
-        for (const mask of message.k) player.pending.push(mask & 7);
-        player.ackInput = message.n;
+        // message.n numbers the first frame in the batch; the client replays
+        // everything after the frame the snapshot acknowledges.
+        message.k.forEach((mask, index) =>
+          player.pending.push({ n: message.n + index, mask: mask & 7 }),
+        );
         break;
+      }
     }
   }
 
@@ -138,7 +142,8 @@ export class RoomDO implements DurableObject {
         player.coastTicks++;
         if (player.coastTicks > INPUT_COAST_TICKS) player.lastMask = 0;
       } else {
-        player.lastMask = next;
+        player.lastMask = next.mask;
+        player.ackInput = next.n;
         player.coastTicks = 0;
       }
 
