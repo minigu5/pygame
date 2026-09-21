@@ -8,6 +8,7 @@ import time
 
 import pygame
 
+from audio import Audio
 from gamemap import GameMap, load_tuning
 from hud import Hud
 from minimap import Minimap
@@ -54,6 +55,7 @@ def main() -> int:
         pygame.font.SysFont("applesdgothicneo,applegothic,arialunicode", 13),
     )
     hud = Hud()
+    audio = Audio()
     frozen = False
     caught = False
     cooldown_until = 0.0
@@ -83,6 +85,7 @@ def main() -> int:
                 and not caught
             ):
                 frozen = not frozen
+                audio.play("freeze")
                 connection.send({"t": "f", "v": frozen})
                 if predictor.body is not None:
                     predictor.body.frozen = frozen
@@ -90,6 +93,8 @@ def main() -> int:
                     panel.eyedropper = False
             elif event.type == pygame.KEYDOWN and event.key == pygame.K_m:
                 minimap.toggle()
+            elif event.type == pygame.KEYDOWN and event.key == pygame.K_n:
+                audio.toggle()
             elif event.type == pygame.KEYDOWN and event.key == pygame.K_e and frozen:
                 panel.toggle_eyedropper()
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and frozen:
@@ -98,6 +103,7 @@ def main() -> int:
                         picked = sample_map_color(game_map, *renderer.to_world(*event.pos))
                         if picked is not None:
                             panel.set_color(picked)
+                            audio.play("pick")
             elif (
                 event.type == pygame.MOUSEBUTTONDOWN
                 and event.button == 1
@@ -137,6 +143,8 @@ def main() -> int:
                 rtt_ms = now * 1000 - message["ts"]
             elif kind == "s":
                 me = message["me"]
+                if message["ph"] != phase:
+                    audio.play({"hiding": "hide", "seeking": "seek", "result": "result"}.get(message["ph"], ""))
                 if message["rd"] != round_number:
                     # New round: roles are dealt again and nothing carries over.
                     round_number = message["rd"]
@@ -157,9 +165,11 @@ def main() -> int:
                 interpolator.drop(message["id"])
             elif kind == "c":
                 interpolator.drop(message["id"])
+                audio.play("caught")
                 if message["id"] == player_id:
                     frozen = False
             elif kind == "cd":
+                audio.play("miss")
                 # The server's timestamp is wall clock; only the length matters.
                 cooldown_until = now + tuning["accuse_cooldown_ms"] / 1000
 
