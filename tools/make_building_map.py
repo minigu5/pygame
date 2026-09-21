@@ -47,9 +47,26 @@ PALETTE = [
     {"name": "tank-room", "color": [64, 100, 106], "solid": False},
     {"name": "junk-room", "color": [100, 84, 78], "solid": False},
     {"name": "roof-door", "color": [86, 98, 84], "solid": False},
+    {"name": "bathroom", "color": [74, 106, 120], "solid": False},
     {"name": "stairwell", "color": [58, 62, 72], "solid": False},
     {"name": "ladder", "color": [168, 132, 72], "solid": False, "ladder": True},
 ]
+def _shade(color: list[int], factor: float) -> list[int]:
+    return [max(0, min(255, round(channel * factor))) for channel in color]
+
+
+# Every room gets two more shades of its own wallpaper: one for the panelling
+# and one for the furniture standing against it. A flat-coloured body can
+# match any of the three, so more shades mean more places to hide rather than
+# a harder puzzle.
+for entry in [item for item in PALETTE if item["color"] and not item["solid"]]:
+    PALETTE.append(
+        {"name": f"{entry['name']}-trim", "color": _shade(entry["color"], 0.74), "solid": False}
+    )
+    PALETTE.append(
+        {"name": f"{entry['name']}-prop", "color": _shade(entry["color"], 1.28), "solid": False}
+    )
+
 INDEX = {entry["name"]: number for number, entry in enumerate(PALETTE)}
 
 CONCRETE, PLANK = INDEX["concrete"], INDEX["plank"]
@@ -70,7 +87,7 @@ LAYOUT: dict[int, list[tuple[str, str, str, int]]] = {
         ("2F-bedroom", "침실", "bedroom", 22),
         ("2F-nursery", "아이방", "nursery", 20),
         ("2F-living", "거실", "living-room", 24),
-        ("2F-bath", "욕실", "washroom", 20),
+        ("2F-bath", "욕실", "bathroom", 20),
     ],
     3: [
         ("3F-library", "도서관", "library", 22),
@@ -104,6 +121,39 @@ def fill(grid: list[list[int]], x: int, y: int, w: int, h: int, value: int) -> N
                 grid[row][col] = value
 
 
+def dress_room(
+    bg: list[list[int]],
+    solid: list[list[int]],
+    rect: tuple[int, int, int, int],
+    wallpaper: str,
+    style: int,
+) -> None:
+    """Give a room a look of its own out of its own three shades."""
+    x, y, w, h = rect
+    trim = INDEX[f"{wallpaper}-trim"]
+    prop = INDEX[f"{wallpaper}-prop"]
+
+    if style == 0:                      # panelling along the bottom
+        fill(bg, x, y + h - 3, w, 3, trim)
+    elif style == 1:                    # vertical stripes
+        for column in range(x + 1, x + w, 4):
+            fill(bg, column, y, 1, h, trim)
+    elif style == 2:                    # a band at eye height
+        fill(bg, x, y + h // 2 - 1, w, 2, trim)
+    else:                               # chequers
+        for row in range(y, y + h, 4):
+            for column in range(x + ((row - y) // 4 % 2) * 4, x + w, 8):
+                fill(bg, column, row, min(4, x + w - column), min(4, y + h - row), trim)
+
+    # Furniture: something to stand behind, and something to stand on.
+    shelf_x = x + 2 + (style % 3)
+    fill(bg, shelf_x, y + h - 5, 3, 4, prop)
+    crate_x = x + w - 5 - (style % 2)
+    fill(bg, crate_x, y + h - 3, 2, 2, prop)
+    if w >= 18:
+        fill(solid, x + w // 2 - 2, y + h - 5, 4, 1, PLANK)
+
+
 def floor_rows(floor: int) -> tuple[int, int]:
     """Interior top row and the solid row the floor stands on."""
     top = ROOF_ROW + (FLOORS - floor) * FLOOR_HEIGHT + 1
@@ -129,6 +179,7 @@ def build() -> dict:
         for room_id, name, wallpaper, width in entries:
             width = min(width, SHAFT_X - 1 - x)
             fill(bg, x, top, width, interior, INDEX[wallpaper])
+            dress_room(bg, solid, (x, top, width, interior), wallpaper, len(rooms) % 4)
             rooms.append(
                 {"id": room_id, "name": name, "floor": floor, "rect": [x, top, width, interior]}
             )

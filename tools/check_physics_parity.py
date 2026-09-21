@@ -40,35 +40,52 @@ FRAMES = (
 
 
 async def run_on_server(base: str) -> dict:
-    async with connect(f"{base}/ws?room=parity-{id(FRAMES)}") as socket:
+    # Roles are dealt when a round starts, and a round needs two players, so
+    # the second connection is here to make the first one the hunter.
+    room = f"parity-{int(time.time())}"
+    async with connect(f"{base}/ws?room={room}&hide=1&seek=600") as socket:
         hello = json.loads(await socket.recv())
-        assert hello["role"] == "hunter", hello
+        assert hello["t"] == "hello", hello
 
-        # Send every frame up front so the queue never empties and the server
-        # never falls back to coasting on the last mask.
-        for start in range(0, len(FRAMES), BATCH):
-            await socket.send(
-                json.dumps({"t": "i", "n": start + 1, "k": FRAMES[start : start + BATCH]})
-            )
+        async with connect(f"{base}/ws?room={room}") as partner:
+            await partner.recv()
+            state = await wait_for_seeking(socket)
+            assert state["me"]["rl"] == "hunter", state["me"]["rl"]
 
-        await asyncio.sleep(len(FRAMES) / 60 + 1.5)
+            # Send every frame up front so the queue never empties and the
+            # server never falls back to coasting on the last mask.
+            for start in range(0, len(FRAMES), BATCH):
+                await socket.send(
+                    json.dumps({"t": "i", "n": start + 1, "k": FRAMES[start : start + BATCH]})
+                )
 
-        # Snapshots never stop arriving, so collect for a fixed window rather
-        # than waiting for a gap that never comes.
-        newest = None
-        deadline = time.monotonic() + 0.5
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
-            try:
-                message = json.loads(await asyncio.wait_for(socket.recv(), remaining))
-            except (TimeoutError, asyncio.TimeoutError):
-                break
-            if message.get("t") == "s":
-                newest = message["me"]
-        assert newest is not None, "no snapshot received"
-        return newest
+            await asyncio.sleep(len(FRAMES) / 60 + 1.5)
+
+            # Snapshots never stop arriving, so collect for a fixed window
+            # rather than waiting for a gap that never comes.
+            newest = None
+            deadline = time.monotonic() + 0.5
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                try:
+                    message = json.loads(await asyncio.wait_for(socket.recv(), remaining))
+                except (TimeoutError, asyncio.TimeoutError):
+                    break
+                if message.get("t") == "s":
+                    newest = message["me"]
+            assert newest is not None, "no snapshot received"
+            return newest
+
+
+async def wait_for_seeking(socket, timeout: float = 20.0) -> dict:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        message = json.loads(await asyncio.wait_for(socket.recv(), deadline - time.monotonic()))
+        if message.get("t") == "s" and message["ph"] == "seeking":
+            return message
+    raise TimeoutError("round never reached seeking")
 
 
 def run_locally(game_map: GameMap, tuning: dict) -> Body:
