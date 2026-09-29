@@ -63,16 +63,63 @@ export function step(body: Body, mask: number, dtMs: number): void {
 
   body.jumpBufferMs = wantsJump && !body.jumpHeld ? tuning.jump_buffer_ms : Math.max(0, body.jumpBufferMs - dtMs);
 
-  // Releasing jump early cuts the rise short, which is what makes the height
-  // controllable rather than fixed.
+  // Releasing jump early cuts the rise short (short hop)
   if (!wantsJump && body.jumpHeld && body.vy < 0) {
     body.vy *= tuning.short_hop_factor;
   }
   body.jumpHeld = wantsJump;
 
+  // Horizontal movement with acceleration/deceleration
   const direction = ((mask & RIGHT) !== 0 ? 1 : 0) - ((mask & LEFT) !== 0 ? 1 : 0);
-  body.vx = direction * tuning.move_speed;
+  const targetVx = direction * tuning.move_speed;
+  
+  // Choose acceleration/deceleration based on whether we're on ground or in air
+  let accel: number, decel: number;
+  if (body.onGround) {
+    accel = tuning.ground_accel;
+    decel = tuning.ground_decel;
+  } else {
+    accel = tuning.air_accel;
+    decel = tuning.air_decel;
+  }
+  
+  // Apply acceleration/deceleration
+  if (direction !== 0) {  // Trying to move
+    if (body.vx * targetVx < 0) {  // Trying to reverse direction
+      // Apply deceleration to stop, then acceleration in new direction
+      if (body.vx > 0) {  // Currently moving right
+        body.vx = Math.max(body.vx - decel * dt, targetVx);
+      } else {  // Currently moving left
+        body.vx = Math.min(body.vx + decel * dt, targetVx);
+      }
+    } else {  // Trying to continue in same direction
+      if (body.vx < targetVx) {  // Need to speed up
+        body.vx = Math.min(body.vx + accel * dt, targetVx);
+      } else {  // Need to slow down (overshooting)
+        body.vx = Math.max(body.vx - accel * dt, targetVx);
+      }
+    }
+  } else {  // Not trying to move - apply deceleration to stop
+    if (body.vx > 0) {
+      body.vx = Math.max(body.vx - decel * dt, 0);
+    } else if (body.vx < 0) {
+      body.vx = Math.min(body.vx + decel * dt, 0);
+    }
+  }
 
+  // Asymmetric gravity
+  let gravityMult: number;
+  if (body.vy < -80) {  // Moving upward fast
+    gravityMult = 1.0;
+  } else if (Math.abs(body.vy) < 80) {  // Near peak of jump
+    gravityMult = 0.55;
+  } else {  // Moving downward
+    gravityMult = 1.5;
+  }
+  
+  body.vy = Math.min(body.vy + tuning.gravity * gravityMult * dt, tuning.max_fall_speed);
+
+  // Handle jump initiation
   if (body.jumpBufferMs > 0 && body.coyoteMs > 0) {
     body.vy = tuning.jump_speed;
     body.jumpBufferMs = 0;
@@ -80,13 +127,11 @@ export function step(body: Body, mask: number, dtMs: number): void {
     body.onGround = false;
   }
 
-  body.vy = Math.min(body.vy + tuning.gravity * dt, tuning.max_fall_speed);
-
   moveX(body, body.vx * dt);
   const landed = moveY(body, body.vy * dt);
 
   body.onGround = landed;
-  body.coyoteMs = landed ? tuning.coyote_ms : Math.max(0, body.coyoteMs - dtMs);
+  body.coyoteMs = landed ? tuning.coyoteMs : Math.max(0, body.coyoteMs - dtMs);
 }
 
 function overlaps(x: number, y: number): boolean {
