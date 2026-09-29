@@ -26,6 +26,7 @@ class Renderer:
         self.font = pygame.font.SysFont("menlo,monospace", 16)
         self.camera = pygame.Vector2(0, 0)
         self.scale = 1.0
+        self.zoom = 1.0         # extra zoom on top of the room's own, for painting
         self._settled = False
 
     def frame(self, room_id: str | None, focus_x: float, focus_y: float) -> None:
@@ -57,6 +58,13 @@ class Renderer:
                     self._clamp(focus_x - visible_w / 2, rect.left, rect.right - visible_w),
                     self._clamp(focus_y - visible_h / 2, rect.top, rect.bottom - visible_h),
                 )
+
+        if self.zoom > 1.0:
+            # Zoomed in to paint: keep the player in the middle, walls or not.
+            target_scale *= self.zoom
+            target = pygame.Vector2(
+                focus_x - width / target_scale / 2, focus_y - height / target_scale / 2
+            )
 
         if self._settled:
             self.scale += (target_scale - self.scale) * EASE
@@ -103,7 +111,7 @@ class Renderer:
         for other in others:
             self._draw_player(other["x"], other["y"], other["c"])
         if me is not None:
-            self._draw_player(me["x"], me["y"], me["c"], mark=True)
+            self._draw_player(me["x"], me["y"], me["c"], mark=True, pattern=me.get("canvas"))
 
         self._blit_world(self.map.foreground, self._visible_world_rect())
 
@@ -131,14 +139,29 @@ class Renderer:
         )
         self.screen.blit(pygame.transform.scale(slice_, target.size), target.topleft)
 
-    def _draw_player(self, x: float, y: float, color: list[int], mark: bool = False) -> None:
+    def body_rect(self, x: float, y: float) -> pygame.Rect:
+        """Where a body standing at (x, y) is drawn on screen this frame."""
         left, top = self.to_screen(x, y)
-        rect = pygame.Rect(
+        return pygame.Rect(
             round(left),
             round(top),
             max(1, round(self.tuning["player_width"] * self.scale)),
             max(1, round(self.tuning["player_height"] * self.scale)),
         )
-        self.screen.fill(color, rect)
+
+    def _draw_player(
+        self,
+        x: float,
+        y: float,
+        color: list[int],
+        mark: bool = False,
+        pattern: pygame.Surface | None = None,
+    ) -> None:
+        rect = self.body_rect(x, y)
+        if pattern is None:
+            self.screen.fill(color, rect)
+        else:
+            # Nearest-neighbour scaling keeps the dots crisp.
+            self.screen.blit(pygame.transform.scale(pattern, rect.size), rect.topleft)
         if mark:
             pygame.draw.rect(self.screen, OUTLINE, rect, width=1)

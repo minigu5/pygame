@@ -125,7 +125,7 @@ class PaintPanel:
                 border_radius=3,
             )
 
-        hint = "eyedropper ON - click the map" if self.eyedropper else "E  eyedropper"
+        hint = "eyedropper ON - click map" if self.eyedropper else "E pick  wheel zoom  ^Z"
         screen.blit(self.font.render(hint, True, HINT), (rect.x + 16, rect.bottom - 26))
 
 

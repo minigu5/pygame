@@ -9,6 +9,7 @@ import time
 import pygame
 
 from audio import Audio
+from body_canvas import BodyCanvas
 from gamemap import GameMap, load_tuning
 from hud import Hud
 from minimap import Minimap
@@ -17,10 +18,14 @@ from physics import Physics
 from playerinput import InputBatcher, sample
 from predict import Interpolator, Predictor
 from render import Renderer
+from ui_brush import Brush
 from ui_paint import PaintPanel, sample_map_color
 
 WIDTH, HEIGHT = 960, 540
 PING_INTERVAL = 1.0
+MAX_ZOOM = 16.0
+ZOOM_STEP = 1.25
+BODY_COLOR = (210, 120, 90)
 
 
 def parse_args() -> argparse.Namespace:
@@ -48,7 +53,10 @@ def main() -> int:
     physics = Physics(game_map, tuning)
     predictor = Predictor(physics, 1000 / tuning["tick_hz"])
     interpolator = Interpolator(1000 / tuning["snapshot_hz"])
-    panel = PaintPanel(pygame.font.SysFont("menlo,monospace", 14), (210, 120, 90))
+    panel = PaintPanel(pygame.font.SysFont("menlo,monospace", 14), BODY_COLOR)
+    canvas = BodyCanvas(BODY_COLOR)
+    brush = Brush(pygame.font.SysFont("menlo,monospace", 14), canvas)
+    body_on_screen: pygame.Rect | None = None
     minimap = Minimap(
         game_map,
         pygame.font.SysFont("menlo,monospace", 12),
@@ -71,6 +79,19 @@ def main() -> int:
     others: list[dict] = []
     next_ping = 0.0
 
+    def paint_target(pos: tuple[int, int]) -> pygame.Rect | None:
+        """The body's screen rect when the brush may paint at pos, else None:
+        not while picking colours, dragging a slider or over the panels."""
+        if (
+            not frozen
+            or panel.eyedropper
+            or panel.dragging is not None
+            or panel.layout(screen).collidepoint(pos)
+            or brush.over_bar(pos)
+        ):
+            return None
+        return body_on_screen
+
     running = True
     while running:
         for event in pygame.event.get():
@@ -91,6 +112,19 @@ def main() -> int:
                     predictor.body.frozen = frozen
                 if not frozen:
                     panel.eyedropper = False
+                    brush.release()
+                    renderer.zoom = 1.0
+            elif (
+                event.type == pygame.KEYDOWN
+                and event.key == pygame.K_z
+                and event.mod & pygame.KMOD_CTRL
+                and frozen
+            ):
+                canvas.undo()
+            elif event.type == pygame.KEYDOWN and frozen and brush.select_key(event.key):
+                panel.eyedropper = False
+            elif event.type == pygame.MOUSEWHEEL and frozen:
+                renderer.zoom = max(1.0, min(MAX_ZOOM, renderer.zoom * ZOOM_STEP**event.y))
             elif event.type == pygame.KEYDOWN and event.key == pygame.K_m:
                 minimap.toggle()
             elif event.type == pygame.KEYDOWN and event.key == pygame.K_n:
@@ -98,12 +132,16 @@ def main() -> int:
             elif event.type == pygame.KEYDOWN and event.key == pygame.K_e and frozen:
                 panel.toggle_eyedropper()
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and frozen:
-                if not panel.on_mouse_down(event.pos):
+                if brush.on_mouse_down(event.pos):
+                    panel.eyedropper = False
+                elif not panel.on_mouse_down(event.pos):
                     if panel.eyedropper:
                         picked = sample_map_color(game_map, *renderer.to_world(*event.pos))
                         if picked is not None:
                             panel.set_color(picked)
                             audio.play("pick")
+                    else:
+                        brush.press(event.pos, paint_target(event.pos), panel.color)
             elif (
                 event.type == pygame.MOUSEBUTTONDOWN
                 and event.button == 1
@@ -114,8 +152,10 @@ def main() -> int:
                 connection.send({"t": "a", "x": world_x, "y": world_y})
             elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
                 panel.on_mouse_up()
+                brush.release()
             elif event.type == pygame.MOUSEMOTION:
                 panel.on_mouse_move(event.pos)
+                brush.move(event.pos, paint_target(event.pos), panel.color)
 
         now = time.monotonic()
         if connection.status == "connected":
@@ -150,6 +190,8 @@ def main() -> int:
                     round_number = message["rd"]
                     frozen = False
                     panel.eyedropper = False
+                    brush.release()
+                    renderer.zoom = 1.0
                     minimap.visited.clear()
                     predictor.body = None
                     predictor.history.clear()
@@ -168,6 +210,8 @@ def main() -> int:
                 audio.play("caught")
                 if message["id"] == player_id:
                     frozen = False
+                    brush.release()
+                    renderer.zoom = 1.0
             elif kind == "cd":
                 audio.play("miss")
                 # The server's timestamp is wall clock; only the length matters.
@@ -175,18 +219,23 @@ def main() -> int:
 
         others = interpolator.at_now()
         drawn_me = None
+        body_on_screen = None
         if me is not None:
             if caught:
                 # Watching through a hunter's eyes: no prediction of my own.
                 x, y = float(me["x"]), float(me["y"])
             else:
                 x, y = predictor.render_position()
-            drawn_me = {"x": x, "y": y, "c": panel.color if role == "chameleon" else me["c"]}
+            drawn_me = {"x": x, "y": y, "c": me["c"]}
+            if role == "chameleon" and not caught:
+                drawn_me["canvas"] = canvas.surface()
             renderer.frame(
                 me["rm"],
                 x + tuning["player_width"] / 2,
                 y + tuning["player_height"] / 2,
             )
+            if frozen and "canvas" in drawn_me:
+                body_on_screen = renderer.body_rect(x, y)
 
         remaining = max(0.0, cooldown_until - now)
         status = [
@@ -202,6 +251,8 @@ def main() -> int:
             status.append(connection.error)
 
         renderer.draw(me["rm"] if me else None, drawn_me, others, status)
+        if body_on_screen is not None:
+            brush.draw_overlay(screen, body_on_screen, active=not panel.eyedropper)
         hud.draw(
             screen,
             phase,
@@ -222,6 +273,7 @@ def main() -> int:
         )
         if frozen:
             panel.draw(screen)
+            brush.draw_bar(screen, panel.layout(screen))
         pygame.display.flip()
         clock.tick(60)
 
