@@ -4,6 +4,7 @@ everything beyond it is drained to grey."""
 from __future__ import annotations
 
 from typing import Any
+import math
 
 import pygame
 
@@ -53,14 +54,29 @@ class Renderer:
             else:
                 # Room larger than the screen at the minimum zoom: follow the
                 # player but never show past the room's own walls.
-                target = pygame.Vector2(
-                    self._clamp(focus_x - visible_w / 2, rect.left, rect.right - visible_w),
-                    self._clamp(focus_y - visible_h / 2, rect.top, rect.bottom - visible_h),
-                )
+                # For stairwells, we want to track vertically but center horizontally in the room
+                if room.get("stairs", False):
+                    # Center horizontally in room, track vertically
+                    target_x = rect.centerx - visible_w / 2
+                    target_y = self._clamp(focus_y - visible_h / 2, rect.top, rect.bottom - visible_h)
+                    target = pygame.Vector2(target_x, target_y)
+                else:
+                    target = pygame.Vector2(
+                        self._clamp(focus_x - visible_w / 2, rect.left, rect.right - visible_w),
+                        self._clamp(focus_y - visible_h / 2, rect.top, rect.bottom - visible_h),
+                    )
 
+        # Frame-independent exponential decay interpolation
+        # position_speed = 8.0, zoom_speed = 6.0 (units: per second)
+        dt = 1.0 / 60.0  # Assuming 60 FPS, but we'll make this more precise if needed
         if self._settled:
-            self.scale += (target_scale - self.scale) * EASE
-            self.camera += (target - self.camera) * EASE
+            # Position interpolation: 1 - e^(-position_speed * dt)
+            pos_factor = 1.0 - math.exp(-8.0 * dt)
+            self.camera += (target - self.camera) * pos_factor
+            
+            # Zoom interpolation: 1 - e^(-zoom_speed * dt)
+            zoom_factor = 1.0 - math.exp(-6.0 * dt)
+            self.scale += (target_scale - self.scale) * zoom_factor
         else:
             self.scale, self.camera = target_scale, target
             self._settled = True

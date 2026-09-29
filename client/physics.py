@@ -85,25 +85,64 @@ class Physics:
             body.coyote_ms = tuning["coyote_ms"]
             return
 
+        # Handle jump buffer
         if wants_jump and not body.jump_held:
             body.jump_buffer_ms = tuning["jump_buffer_ms"]
         else:
             body.jump_buffer_ms = max(0.0, body.jump_buffer_ms - dt_ms)
 
+        # Releasing jump early cuts the rise short (short hop)
         if not wants_jump and body.jump_held and body.vy < 0:
             body.vy *= tuning["short_hop_factor"]
         body.jump_held = wants_jump
 
+        # Horizontal movement with acceleration/deceleration
         direction = (1 if mask & RIGHT else 0) - (1 if mask & LEFT else 0)
-        body.vx = direction * tuning["move_speed"]
+        target_vx = direction * tuning["move_speed"]
+        
+        # Choose acceleration/deceleration based on whether we're on ground or in air
+        if body.on_ground:
+            accel = tuning["ground_accel"]
+            decel = tuning["ground_decel"]
+        else:
+            accel = tuning["air_accel"]
+            decel = tuning["air_decel"]
+        
+        # Apply acceleration/deceleration
+        if direction != 0:  # Trying to move
+            if body.vx * target_vx < 0:  # Trying to reverse direction
+                # Apply deceleration to stop, then acceleration in new direction
+                if body.vx > 0:  # Currently moving right
+                    body.vx = max(body.vx - decel * dt, target_vx)
+                else:  # Currently moving left
+                    body.vx = min(body.vx + decel * dt, target_vx)
+            else:  # Trying to continue in same direction
+                if body.vx < target_vx:  # Need to speed up
+                    body.vx = min(body.vx + accel * dt, target_vx)
+                else:  # Need to slow down (overshooting)
+                    body.vx = max(body.vx - accel * dt, target_vx)
+        else:  # Not trying to move - apply deceleration to stop
+            if body.vx > 0:
+                body.vx = max(body.vx - decel * dt, 0)
+            elif body.vx < 0:
+                body.vx = min(body.vx + decel * dt, 0)
 
+        # Asymmetric gravity
+        if body.vy < -80:  # Moving upward fast
+            gravity_mult = 1.0
+        elif abs(body.vy) < 80:  # Near peak of jump
+            gravity_mult = 0.55
+        else:  # Moving downward
+            gravity_mult = 1.5
+        
+        body.vy = min(body.vy + tuning["gravity"] * gravity_mult * dt, tuning["max_fall_speed"])
+
+        # Handle jump initiation
         if body.jump_buffer_ms > 0 and body.coyote_ms > 0:
             body.vy = tuning["jump_speed"]
             body.jump_buffer_ms = 0.0
             body.coyote_ms = 0.0
             body.on_ground = False
-
-        body.vy = min(body.vy + tuning["gravity"] * dt, tuning["max_fall_speed"])
 
         self._move_x(body, body.vx * dt)
         landed = self._move_y(body, body.vy * dt)

@@ -9,7 +9,7 @@
   "max_fall_speed": 900,
   "player_width": 24,
   "player_height": 32,
-  "step_height": 32,
+  "step_height": 10,
   "climb_speed": 150,
   "coyote_ms": 100,
   "jump_buffer_ms": 120,
@@ -19,5 +19,9 @@
   "hide_seconds": 60,
   "seek_seconds": 120,
   "result_seconds": 5,
-  "max_players": 4
+  "max_players": 4,
+  "ground_accel": 1600,
+  "ground_decel": 2200,
+  "air_accel": 800,
+  "air_decel": 300
 }
