@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import pygame
 
-KOREAN_FONTS = "applesdgothicneo,applegothic,malgungothic,notosanskr,arialunicode"
+# macOS, Windows, then the usual Linux packages (fonts-noto-cjk, fonts-nanum).
+KOREAN_FONTS = "applesdgothicneo,applegothic,malgungothic,notosanskr,notosanscjkkr,nanumgothic,nanumbarungothic,arialunicode"
 
 PHASE_NAMES = {
     "waiting": "대기 중",

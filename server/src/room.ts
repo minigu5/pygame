@@ -9,8 +9,22 @@ const SNAPSHOT_EVERY = Math.round(tuning.tick_hz / tuning.snapshot_hz);
 // Keep replaying the last input for a moment so a late packet does not read as
 // the player letting go of every key.
 const INPUT_COAST_TICKS = 8;
+// A timer that fires late is made up for by running the missed ticks at once,
+// up to this many, so the simulation keeps wall-clock time.
+const MAX_CATCHUP_TICKS = 8;
+// Inputs queued beyond this are drained two per tick: a client ahead of the
+// server would otherwise fall further behind every second, and a freeze
+// pressed now would land where the body was long ago.
+const MAX_INPUT_BACKLOG = 6;
 
 const DEFAULT_COLOR: [number, number, number] = [210, 120, 90];
+
+// Whole pixels would put a body resting at y=112.6 a pixel into the floor on
+// the client, which then nudges it back up: a tenth keeps snapshots short
+// without that bob.
+function tenths(value: number): number {
+  return Math.round(value * 10) / 10;
+}
 
 type Player = {
   id: string;
@@ -22,11 +36,15 @@ type Player = {
   room: string | null;
   watching: string | null;
   accuseReadyAt: number;
-  pending: { n: number; mask: number }[];
+  pending: PendingInput[];
+  // A freeze toggle for an input frame that has not been queued yet.
+  freezeAt: { n: number; v: boolean } | null;
   lastMask: number;
   coastTicks: number;
   ackInput: number;
 };
+
+type PendingInput = { n: number; mask: number; freeze?: boolean };
 
 export class RoomDO implements DurableObject {
   private players = new Map<string, Player>();
@@ -36,6 +54,7 @@ export class RoomDO implements DurableObject {
   private clock = new RoundClock({ hideMs: 0, seekMs: 0, resultMs: 0 });
   private timer: number | null = null;
   private tick = 0;
+  private tickDue = 0;   // wall-clock time the next tick is owed at
 
   constructor(
     private state: DurableObjectState,
@@ -71,6 +90,7 @@ export class RoomDO implements DurableObject {
       watching: null,
       accuseReadyAt: 0,
       pending: [],
+      freezeAt: null,
       lastMask: 0,
       coastTicks: 0,
       ackInput: 0,
@@ -112,6 +132,7 @@ export class RoomDO implements DurableObject {
       player.watching = null;
       player.accuseReadyAt = 0;
       player.pending = [];
+      player.freezeAt = null;
       player.lastMask = 0;
       player.body = spawnBody(map.spawn[player.role] ?? map.spawn.chameleon);
       // Spread the hiders out so they do not all start on one tile.
@@ -148,10 +169,19 @@ export class RoomDO implements DurableObject {
       case "ping":
         this.send(player, { t: "pong", ts: message.ts });
         break;
-      case "f":
+      case "f": {
         if (player.role !== "chameleon") break;
-        player.body.frozen = message.v;
+        const n = message.n;
+        if (typeof n !== "number" || n <= player.ackInput) {
+          // An old client, or a frame already played: now is the best we can do.
+          player.body.frozen = message.v;
+          break;
+        }
+        const queued = player.pending.find((input) => input.n === n);
+        if (queued) queued.freeze = message.v;
+        else player.freezeAt = { n, v: message.v };
         break;
+      }
       case "p": {
         if (player.role !== "chameleon") break;
         const channels = message.c;
@@ -182,9 +212,14 @@ export class RoomDO implements DurableObject {
         if (player.role === "spectator") break;
         // message.n numbers the first frame in the batch; the client replays
         // everything after the frame the snapshot acknowledges.
-        message.k.forEach((mask, index) =>
-          player.pending.push({ n: message.n + index, mask: mask & 31 }),
-        );
+        message.k.forEach((mask, index) => {
+          const input: PendingInput = { n: message.n + index, mask: mask & 31 };
+          if (player.freezeAt !== null && player.freezeAt.n === input.n) {
+            input.freeze = player.freezeAt.v;
+            player.freezeAt = null;
+          }
+          player.pending.push(input);
+        });
         break;
       }
     }
@@ -210,7 +245,8 @@ export class RoomDO implements DurableObject {
   // request, which a 60Hz loop would exhaust in about a day.
   private startTicking(): void {
     if (this.timer !== null) return;
-    this.timer = setInterval(() => this.onTick(), TICK_MS) as unknown as number;
+    this.tickDue = Date.now() + TICK_MS;
+    this.timer = setInterval(() => this.onTimer(), TICK_MS) as unknown as number;
   }
 
   private stopTicking(): void {
@@ -218,6 +254,20 @@ export class RoomDO implements DurableObject {
     clearInterval(this.timer);
     this.timer = null;
     this.tick = 0;
+  }
+
+  // The interval is not trusted to fire on time: every tick owed since the
+  // last one is run now, so a slow timer thins the ticks out rather than
+  // slowing the game down and letting the input queues pile up.
+  private onTimer(): void {
+    const now = Date.now();
+    let ticks = 0;
+    while (this.tickDue <= now && ticks < MAX_CATCHUP_TICKS) {
+      this.onTick();
+      this.tickDue += TICK_MS;
+      ticks++;
+    }
+    if (this.tickDue <= now) this.tickDue = now + TICK_MS;   // too far behind: drop the rest
   }
 
   private onTick(): void {
@@ -228,21 +278,26 @@ export class RoomDO implements DurableObject {
     for (const player of this.players.values()) {
       if (player.role === "spectator" || player.caught) continue;
 
-      const next = player.pending.shift();
-      if (next === undefined) {
-        player.coastTicks++;
-        if (player.coastTicks > INPUT_COAST_TICKS) player.lastMask = 0;
-      } else {
-        player.lastMask = next.mask;
-        player.ackInput = next.n;
-        player.coastTicks = 0;
-      }
-
       // The hunter is shut out while the others hide, and nobody moves once
       // the round is decided.
       const held =
         this.clock.phase === "result" || (hunterWaits && player.role === "hunter");
-      step(player.body, held ? 0 : player.lastMask, TICK_MS);
+      const steps = player.pending.length > MAX_INPUT_BACKLOG ? 2 : 1;
+      for (let i = 0; i < steps; i++) {
+        const next = player.pending.shift();
+        if (next === undefined) {
+          player.coastTicks++;
+          if (player.coastTicks > INPUT_COAST_TICKS) player.lastMask = 0;
+        } else {
+          player.lastMask = next.mask;
+          player.ackInput = next.n;
+          player.coastTicks = 0;
+          if (next.freeze !== undefined && player.role === "chameleon") {
+            player.body.frozen = next.freeze;
+          }
+        }
+        step(player.body, held ? 0 : player.lastMask, TICK_MS);
+      }
       player.room = roomAt(
         player.body.x + tuning.player_width / 2,
         player.body.y + tuning.player_height / 2,
@@ -307,8 +362,8 @@ export class RoomDO implements DurableObject {
         if (other.room !== eyes.room) continue;
         others.push({
           i: other.id,
-          x: Math.round(other.body.x),
-          y: Math.round(other.body.y),
+          x: tenths(other.body.x),
+          y: tenths(other.body.y),
           fz: other.body.frozen,
           c: other.color,
         });
@@ -322,9 +377,9 @@ export class RoomDO implements DurableObject {
         rd: this.clock.round,
         ...(this.clock.winner ? { win: this.clock.winner } : {}),
         me: {
-          x: Math.round(eyes.body.x),
-          y: Math.round(eyes.body.y),
-          vy: Math.round(eyes.body.vy),
+          x: tenths(eyes.body.x),
+          y: tenths(eyes.body.y),
+          vy: tenths(eyes.body.vy),
           g: eyes.body.onGround,
           fz: eyes.body.frozen,
           rm: eyes.room,

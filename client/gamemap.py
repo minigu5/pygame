@@ -54,6 +54,15 @@ class GameMap:
         path = SHARED / f"{name}.json"
         return cls(json.loads(path.read_text(encoding="utf-8")))
 
+    def room_at(self, x: float, y: float) -> str | None:
+        """The room whose rect holds the world point, or None in the gaps between rooms."""
+        col, row = int(x // self.tile_size), int(y // self.tile_size)
+        for room in self.rooms:
+            rx, ry, rw, rh = room["rect"]
+            if rx <= col < rx + rw and ry <= row < ry + rh:
+                return room["id"]
+        return None
+
     def room_by_id(self, room_id: str | None) -> dict[str, Any] | None:
         if room_id is None:
             return None

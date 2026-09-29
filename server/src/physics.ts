@@ -131,7 +131,7 @@ export function step(body: Body, mask: number, dtMs: number): void {
   const landed = moveY(body, body.vy * dt);
 
   body.onGround = landed;
-  body.coyoteMs = landed ? tuning.coyoteMs : Math.max(0, body.coyoteMs - dtMs);
+  body.coyoteMs = landed ? tuning.coyote_ms : Math.max(0, body.coyoteMs - dtMs);
 }
 
 function overlaps(x: number, y: number): boolean {

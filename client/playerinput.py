@@ -12,15 +12,17 @@ DOWN = 16
 
 
 def sample() -> int:
+    """This frame's key mask. Space is the freeze toggle, so it is not here;
+    W jumps, and the arrows climb a ladder until a stair key is chosen."""
     keys = pygame.key.get_pressed()
     mask = 0
     if keys[pygame.K_LEFT] or keys[pygame.K_a]:
         mask |= LEFT
     if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
         mask |= RIGHT
-    if keys[pygame.K_SPACE]:
+    if keys[pygame.K_w]:
         mask |= JUMP
-    if keys[pygame.K_UP] or keys[pygame.K_w]:
+    if keys[pygame.K_UP]:
         mask |= UP
     if keys[pygame.K_DOWN] or keys[pygame.K_s]:
         mask |= DOWN

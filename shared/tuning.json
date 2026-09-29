@@ -20,6 +20,7 @@
   "seek_seconds": 120,
   "result_seconds": 5,
   "max_players": 4,
+  "shape_sizes": {"stand": [24, 32], "crouch": [24, 20], "lie": [36, 12]},
   "ground_accel": 1600,
   "ground_decel": 2200,
   "air_accel": 800,

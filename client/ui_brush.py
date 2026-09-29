@@ -1,147 +1,123 @@
 """Freeze-mode brush: paints the body where it stands in the game view.
 
-Holding the left button paints the body cells the cursor passes over; press to
-release is one stroke, which one Ctrl+Z takes back. The wheel zooms the camera
-in so the 12x16 cells are big enough to aim at.
+Holding the left button paints wherever the cursor passes over the body;
+press to release is one stroke, which one Ctrl+Z takes back. The wheel zooms
+the camera in so the body is big enough to paint on. The stroke is walked in
+the pose's own cell grid and every stamp is mapped onto the one standing
+canvas by body_shape, so it lands where the cursor shows it in any pose.
 """
 
 from __future__ import annotations
 
+import math
+from dataclasses import dataclass
+
 import pygame
 
-from body_canvas import COLS, ROWS, BodyCanvas, Color
+import body_shape
+from body_canvas import BodyCanvas, Color
+from ui_bar import ButtonBar
 
-BAR_HEIGHT = 36
-BAR_GAP = 8
-PAD = 6
-BUTTON_GAP = 6
-
-PANEL_BG = (28, 30, 38)
-PANEL_EDGE = (72, 76, 90)
-LABEL = (198, 202, 212)
-BUTTON = (46, 50, 62)
-BUTTON_ACTIVE = (92, 132, 210)
-GRID = (0, 0, 0, 60)
 CURSOR = (255, 255, 255)
-GRID_MIN_CELL = 6       # screen pixels per cell before the grid is worth drawing
+CURSOR_SHADOW = (0, 0, 0)
+MIN_CURSOR_PX = 2
 
-# (label, brush size, erases)
-TOOLS = (("1x1", 1, False), ("2x2", 2, False), ("4x4", 4, False), ("ERASE", 2, True))
+# (label, ASCII label for machines without a Korean font, radius in canvas cells, erases)
+TOOLS = (
+    ("가늘게", "thin", 3, False),
+    ("보통", "mid", 7, False),
+    ("굵게", "thick", 14, False),
+    ("지우개", "erase", 10, True),
+)
 TOOL_KEYS = (pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4)
 
 
+@dataclass
+class PaintTarget:
+    """The body as drawn this frame: its screen rect and the pose it is in."""
+
+    rect: pygame.Rect
+    pose: str
+
+    def cell_at(self, pos: tuple[int, int]) -> tuple[float, float] | None:
+        """The cursor as a point in the pose's cell grid, or None when off the body."""
+        if not self.rect.collidepoint(pos):
+            return None
+        cells_w, cells_h = body_shape.cell_size(self.pose)
+        return (
+            (pos[0] - self.rect.x) * cells_w / self.rect.width,
+            (pos[1] - self.rect.y) * cells_h / self.rect.height,
+        )
+
+    def cell_px(self) -> float:
+        """Screen pixels per canvas cell."""
+        return self.rect.width / body_shape.cell_size(self.pose)[0]
+
+
 class Brush:
-    def __init__(self, font: pygame.font.Font, canvas: BodyCanvas) -> None:
-        self.font = font
+    def __init__(self, font: pygame.font.Font, canvas: BodyCanvas, ascii_labels: bool = False) -> None:
         self.canvas = canvas
-        self.tool = 0
-        self._buttons: list[pygame.Rect] = []
+        self.bar = ButtonBar(font, [tool[1] if ascii_labels else tool[0] for tool in TOOLS], TOOL_KEYS)
         self.pressed = False
-        self._last_cell: tuple[int, int] | None = None
-        self._hover: tuple[int, int] | None = None
+        self._last: tuple[float, float] | None = None     # last stamp, in the pose's cells
+        self._last_pose: str | None = None
+        self._hover: tuple[int, int] | None = None         # cursor on screen when over the body
 
-    def select_key(self, key: int) -> bool:
-        if key in TOOL_KEYS:
-            self.tool = TOOL_KEYS.index(key)
-            return True
-        return False
+    @property
+    def tool(self) -> int:
+        return self.bar.selected
 
-    def on_mouse_down(self, pos: tuple[int, int]) -> bool:
-        """Returns True when the click picked a tool."""
-        for index, button in enumerate(self._buttons):
-            if button.collidepoint(pos):
-                self.tool = index
-                return True
-        return False
-
-    def over_bar(self, pos: tuple[int, int]) -> bool:
-        return any(button.collidepoint(pos) for button in self._buttons)
-
-    def press(self, pos: tuple[int, int], body: pygame.Rect | None, color: Color) -> None:
+    def press(self, pos: tuple[int, int], target: PaintTarget | None, color: Color) -> None:
         """Starts a stroke; it may begin off the body and be dragged onto it."""
         self.release()
         self.pressed = True
         self.canvas.begin_stroke()
-        self.move(pos, body, color)
+        self.move(pos, target, color)
 
-    def move(self, pos: tuple[int, int], body: pygame.Rect | None, color: Color) -> None:
-        """Tracks the cursor; `body` is the body's rect on screen, None when off limits."""
-        cell = None if body is None else self._cell_at(pos, body)
-        self._hover = cell
-        if not self.pressed or cell is None:
+    def move(self, pos: tuple[int, int], target: PaintTarget | None, color: Color) -> None:
+        """Tracks the cursor; `target` is None when painting is not allowed there."""
+        cell = None if target is None else target.cell_at(pos)
+        self._hover = pos if cell is not None else None
+        if not self.pressed or cell is None or target is None:
             # Leaving the body keeps the stroke open but must not draw a line
             # across the gap when the cursor comes back in somewhere else.
-            self._last_cell = None
+            self._last = None
             return
-        # A fast flick jumps several cells between events; fill the gap.
-        self._paint_line(self._last_cell or cell, cell, color)
-        self._last_cell = cell
+        if target.pose != self._last_pose:
+            # The body changed shape under the cursor: the old point means nothing now.
+            self._last = None
+            self._last_pose = target.pose
+        _, _, radius, erases = TOOLS[self.tool]
+        paint = self.canvas.base if erases else color
+        self._walk(self._last or cell, cell, target.pose, radius, paint)
+        self._last = cell
+
+    def lift(self) -> None:
+        """Breaks the line without ending the stroke, e.g. when the view changes
+        under the cursor and the next point is somewhere else on the body."""
+        self._last = None
 
     def release(self) -> None:
         """Ends the stroke: the button came up or painting stopped."""
         if self.pressed:
             self.canvas.end_stroke()
         self.pressed = False
-        self._last_cell = None
+        self._last = None
 
-    @staticmethod
-    def _cell_at(pos: tuple[int, int], body: pygame.Rect) -> tuple[int, int] | None:
-        if not body.collidepoint(pos):
-            return None
-        return (
-            min(COLS - 1, (pos[0] - body.x) * COLS // body.width),
-            min(ROWS - 1, (pos[1] - body.y) * ROWS // body.height),
-        )
-
-    def _paint_line(self, start: tuple[int, int], end: tuple[int, int], color: Color) -> None:
-        _, size, erases = TOOLS[self.tool]
-        paint = self.canvas.base if erases else color
-        steps = max(abs(end[0] - start[0]), abs(end[1] - start[1]), 1)
+    def _walk(self, start: tuple[float, float], end: tuple[float, float], pose: str, radius: float, color: Color) -> None:
+        """Stamps along a segment of the pose's grid closely enough to read as one mark."""
+        dx, dy = end[0] - start[0], end[1] - start[1]
+        steps = max(1, math.ceil(math.hypot(dx, dy) / max(1.0, radius / 2)))
         for step in range(steps + 1):
-            col = round(start[0] + (end[0] - start[0]) * step / steps)
-            row = round(start[1] + (end[1] - start[1]) * step / steps)
-            self.canvas.paint(col, row, size, paint)
+            t = step / steps
+            cx, cy, rx, ry = body_shape.stamp_geometry(pose, start[0] + dx * t, start[1] + dy * t, radius)
+            self.canvas.stamp(cx, cy, rx, ry, color, flush=False)
+        self.canvas.flush()
 
-    def draw_bar(self, screen: pygame.Surface, below: pygame.Rect) -> None:
-        """The tool buttons, in a strip just above the colour panel."""
-        rect = pygame.Rect(below.x, below.y - BAR_GAP - BAR_HEIGHT, below.width, BAR_HEIGHT)
-        pygame.draw.rect(screen, PANEL_BG, rect, border_radius=8)
-        pygame.draw.rect(screen, PANEL_EDGE, rect, width=1, border_radius=8)
-        inner = rect.width - PAD * 2
-        button_w = (inner - BUTTON_GAP * (len(TOOLS) - 1)) // len(TOOLS)
-        self._buttons = [
-            pygame.Rect(rect.x + PAD + index * (button_w + BUTTON_GAP), rect.y + PAD, button_w, BAR_HEIGHT - PAD * 2)
-            for index in range(len(TOOLS))
-        ]
-        for index, ((label, _, _), button) in enumerate(zip(TOOLS, self._buttons)):
-            pygame.draw.rect(screen, BUTTON_ACTIVE if index == self.tool else BUTTON, button, border_radius=4)
-            text = self.font.render(label, True, LABEL)
-            screen.blit(text, text.get_rect(center=button.center))
-
-    def draw_overlay(self, screen: pygame.Surface, body: pygame.Rect | None, active: bool) -> None:
-        """Cell grid on the zoomed-in body, and the brush footprint under the cursor."""
-        if body is None:
+    def draw_cursor(self, screen: pygame.Surface, target: PaintTarget | None) -> None:
+        """The brush's footprint under the cursor while it is over the body."""
+        if target is None or self._hover is None:
             return
-        cell_w = body.width / COLS
-        cell_h = body.height / ROWS
-        if cell_w >= GRID_MIN_CELL:
-            lines = pygame.Surface(body.size, pygame.SRCALPHA)
-            for col in range(1, COLS):
-                x = round(col * cell_w)
-                pygame.draw.line(lines, GRID, (x, 0), (x, body.height))
-            for row in range(1, ROWS):
-                y = round(row * cell_h)
-                pygame.draw.line(lines, GRID, (0, y), (body.width, y))
-            screen.blit(lines, body.topleft)
-
-        if active and self._hover is not None:
-            size = TOOLS[self.tool][1]
-            left = self._hover[0] - (size - 1) // 2
-            top = self._hover[1] - (size - 1) // 2
-            footprint = pygame.Rect(
-                body.x + round(left * cell_w),
-                body.y + round(top * cell_h),
-                round(size * cell_w),
-                round(size * cell_h),
-            ).clip(body)
-            pygame.draw.rect(screen, CURSOR, footprint, width=1)
+        radius = max(MIN_CURSOR_PX, round(TOOLS[self.tool][2] * target.cell_px()))
+        pygame.draw.circle(screen, CURSOR_SHADOW, self._hover, radius + 1, width=1)
+        pygame.draw.circle(screen, CURSOR, self._hover, radius, width=1)

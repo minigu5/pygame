@@ -5,7 +5,9 @@ export type Winner = "hunter" | "chameleons";
 export type ClientMessage =
   | { t: "ping"; ts: number }
   | { t: "i"; n: number; k: number[] }
-  | { t: "f"; v: boolean }
+  // n: the first input frame the toggle applies to, so it lands on the same
+  // frame the client froze on however far behind the input queue is.
+  | { t: "f"; v: boolean; n?: number }
   | { t: "p"; c: [number, number, number] }
   | { t: "a"; x: number; y: number };
 

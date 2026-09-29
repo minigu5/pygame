@@ -8,6 +8,7 @@ import math
 
 import pygame
 
+import body_shape
 from gamemap import GameMap
 
 BACKGROUND = (10, 11, 15)
@@ -125,9 +126,18 @@ class Renderer:
             self._blit_world(self.map.world, self._room_pixels(room))
 
         for other in others:
-            self._draw_player(other["x"], other["y"], other["c"])
+            # Only a colour comes over the wire, and no pose: a flat standing
+            # figure, walking side-on when it moves.
+            frame = other.get("frame")
+            if frame is None:
+                sprite = body_shape.solid_sprite(other["c"], "stand")
+            else:
+                sprite = body_shape.solid_sprite(other["c"], "walk", frame)
+                if other.get("facing", 1) < 0:
+                    sprite = pygame.transform.flip(sprite, True, False)
+            self._draw_body(sprite, "stand", other["x"], other["y"])
         if me is not None:
-            self._draw_player(me["x"], me["y"], me["c"], mark=True, pattern=me.get("canvas"))
+            self._draw_body(me["sprite"], me["pose"], me["x"], me["y"], mark=True)
 
         self._blit_world(self.map.foreground, self._visible_world_rect())
 
@@ -155,29 +165,37 @@ class Renderer:
         )
         self.screen.blit(pygame.transform.scale(slice_, target.size), target.topleft)
 
-    def body_rect(self, x: float, y: float) -> pygame.Rect:
-        """Where a body standing at (x, y) is drawn on screen this frame."""
-        left, top = self.to_screen(x, y)
+    def body_rect(self, pose: str, x: float, y: float) -> pygame.Rect:
+        """Where a body in `pose` whose hitbox is at (x, y) is drawn on screen this frame."""
+        # The collision box covers the whole pixel rows floor(y) .. floor(y)+31,
+        # so a body resting at y=112.9 stands on row 144: drawn from 112.9 its
+        # feet would hang a pixel into the floor.
+        world = body_shape.pose_rect(pose, x, math.floor(y), self.tuning["player_width"], self.tuning["player_height"])
+        left, top = self.to_screen(world.x, world.y)
+        _, bottom = self.to_screen(world.x, world.bottom)
+        # Sized from the rounded bottom edge, not the rounded height, so the
+        # feet land on the same screen row as the floor tile's top edge.
+        height = max(1, round(bottom) - round(top))
         return pygame.Rect(
             round(left),
             round(top),
-            max(1, round(self.tuning["player_width"] * self.scale)),
-            max(1, round(self.tuning["player_height"] * self.scale)),
+            max(1, round(world.width * self.scale)),
+            height,
         )
 
-    def _draw_player(
-        self,
-        x: float,
-        y: float,
-        color: list[int],
-        mark: bool = False,
-        pattern: pygame.Surface | None = None,
-    ) -> None:
-        rect = self.body_rect(x, y)
-        if pattern is None:
-            self.screen.fill(color, rect)
-        else:
-            # Nearest-neighbour scaling keeps the dots crisp.
-            self.screen.blit(pygame.transform.scale(pattern, rect.size), rect.topleft)
+    def _draw_body(self, sprite: pygame.Surface, pose: str, x: float, y: float, mark: bool = False) -> None:
+        rect = self.body_rect(pose, x, y)
+        if not rect.colliderect(self.screen.get_rect()):
+            # Zoomed in to paint, the rest of the room is off screen: no point
+            # scaling a body nobody sees.
+            return
+        # Smooth scaling both ways: the painting is finer than the screen
+        # unzoomed, and reads as brushwork rather than blocks when zoomed in.
+        self.screen.blit(pygame.transform.smoothscale(sprite, rect.size), rect.topleft)
         if mark:
-            pygame.draw.rect(self.screen, OUTLINE, rect, width=1)
+            # A small arrow over my own head, the same size at any zoom, so it
+            # never sits on the silhouette's edge while I paint.
+            cx, top = rect.centerx, rect.top
+            points = [(cx - 5, top - 12), (cx + 5, top - 12), (cx, top - 5)]
+            pygame.draw.polygon(self.screen, TEXT, points)
+            pygame.draw.polygon(self.screen, OUTLINE, points, width=1)

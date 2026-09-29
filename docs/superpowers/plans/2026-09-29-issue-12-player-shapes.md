@@ -74,7 +74,7 @@
 - Modify: `client/physics.py`
 
 **Interfaces:**
-- Numeric key events `1`/`2`/`3` choose size; `4`/`5`/`6` choose pose.
+- Pose is chosen with `Down`/`Up` and the pose bar (client side done 2026-09-29, freeze mode only); `1`-`4` belong to the brushes, so size keys are still to be picked.
 - Predictor reconciliation reads `pose` and `size` from authoritative snapshot before replaying unacknowledged movement.
 
 - [ ] Map numeric key events to requested size and pose.
