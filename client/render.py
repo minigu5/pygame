@@ -29,7 +29,11 @@ class Renderer:
         self.font = ui_font(15)
         self.camera = pygame.Vector2(0, 0)
         self.scale = 1.0
-        self.zoom = 1.0         # extra zoom on top of the room's own, for painting
+        self.zoom = 1.0         # extra zoom on top of the room's own, for painting and for searching
+        self.room_scale = 1.0   # the room's own zoom, before any of that
+        # Where the view is heading; the camera and scale ease towards these.
+        self._target_scale = 1.0
+        self._target_camera = pygame.Vector2(0, 0)
         self._settled = False
 
     def frame(self, room_id: str | None, focus_x: float, focus_y: float) -> None:
@@ -69,12 +73,15 @@ class Renderer:
                         self._clamp(focus_y - visible_h / 2, rect.top, rect.bottom - visible_h),
                     )
 
+        self.room_scale = target_scale
         if self.zoom > 1.0:
             # Zoomed in to paint: keep the player in the middle, walls or not.
             target_scale *= self.zoom
             target = pygame.Vector2(
                 focus_x - width / target_scale / 2, focus_y - height / target_scale / 2
             )
+
+        self._target_scale, self._target_camera = target_scale, target
 
         # Frame-independent exponential decay interpolation
         # position_speed = 8.0, zoom_speed = 6.0 (units: per second)
@@ -90,6 +97,30 @@ class Renderer:
         else:
             self.scale, self.camera = target_scale, target
             self._settled = True
+
+    def focus_keeping(self, screen_pos: tuple[float, float], zoom: float) -> tuple[float, float]:
+        """Where to centre the view at `zoom` so that what is under
+        `screen_pos` now is still under it then: zooming on the cursor."""
+        width, height = self.screen.get_size()
+        # Read off the view being eased towards, not the one on screen: a
+        # second turn of the wheel before the first has settled would
+        # otherwise take a point the view is still sliding past.
+        world_x = screen_pos[0] / self._target_scale + self._target_camera.x
+        world_y = screen_pos[1] / self._target_scale + self._target_camera.y
+        scale = self.room_scale * zoom
+        focus = (
+            world_x - (screen_pos[0] - width / 2) / scale,
+            world_y - (screen_pos[1] - height / 2) / scale,
+        )
+        self._target_scale = scale
+        self._target_camera = pygame.Vector2(focus[0] - width / scale / 2, focus[1] - height / scale / 2)
+        return focus
+
+    def room_centre(self, room_id: str | None) -> tuple[float, float]:
+        room = self.map.room_by_id(room_id)
+        if room is None:
+            return self.map.pixel_width / 2, self.map.pixel_height / 2
+        return self._room_pixels(room).center
 
     def _room_pixels(self, room: dict[str, Any]) -> pygame.Rect:
         size = self.map.tile_size

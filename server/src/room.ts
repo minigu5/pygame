@@ -212,7 +212,9 @@ export class RoomDO implements DurableObject {
     this.publish();
   }
 
-  /** Deal roles for a round: one hunter, everyone else hides. */
+  /** Deal roles for a round: one hunter, everyone else hides. The hunter is
+   * an eye and a pointer, not a body: it is never stepped and never shown,
+   * and its place on the map only says which room it looks into. */
   private startRound(): void {
     this.clock.startRound();
     this.missesLeft = tuning.accuse_misses;
@@ -239,6 +241,10 @@ export class RoomDO implements DurableObject {
         player.body.x += HIDER_SPAWN_LEAD - hiders * HIDER_SPAWN_GAP;
         hiders++;
       }
+      player.room = roomAt(
+        player.body.x + tuning.player_width / 2,
+        player.body.y + tuning.player_height / 2,
+      );
     }
   }
 
@@ -340,7 +346,7 @@ export class RoomDO implements DurableObject {
         break;
       case "i": {
         // A body that is not being stepped would only queue these up unread.
-        if (player.role === "spectator" || player.caught) break;
+        if (player.role !== "chameleon" || player.caught) break;
         // message.n numbers the first frame in the batch; the client replays
         // everything after the frame the snapshot acknowledges.
         message.k.forEach((mask, index) => {
@@ -415,14 +421,12 @@ export class RoomDO implements DurableObject {
     this.advanceRound();
     if (this.tick % HEARTBEAT_TICKS === 0) this.publish();
 
-    const hunterWaits = this.clock.phase === "hiding";
+    // Nobody moves once the round is decided.
+    const held = this.clock.phase === "result";
     for (const player of this.players.values()) {
-      if (player.role === "spectator" || player.caught) continue;
+      // Only the hiders have bodies to move.
+      if (player.role !== "chameleon" || player.caught) continue;
 
-      // The hunter is shut out while the others hide, and nobody moves once
-      // the round is decided.
-      const held =
-        this.clock.phase === "result" || (hunterWaits && player.role === "hunter");
       const steps = player.pending.length > MAX_INPUT_BACKLOG ? 2 : 1;
       for (let i = 0; i < steps; i++) {
         // One step for each frame the client played, and none of its own: a
@@ -504,6 +508,7 @@ export class RoomDO implements DurableObject {
       const others = [];
       for (const other of this.players.values()) {
         if (other.id === eyes.id || other.caught || blind) continue;
+        if (other.role !== "chameleon") continue;   // the hunter has no body to show
         // Filtering by room, not by viewport: a player in another room is
         // never sent, so a modified client cannot reveal one.
         if (other.room !== eyes.room) continue;

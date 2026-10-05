@@ -95,13 +95,13 @@ async def main(base: str) -> int:
 
             hunter, hider = (first, second) if hiding["me"]["rl"] == "hunter" else (second, first)
 
-            # The hunter is shut out while the others hide.
+            # The hunter is an eye and a pointer: it has no body to move, now or later.
             start = (await latest(hunter))["me"]["x"]
             for sequence in range(1, 9):
                 await hunter.send(json.dumps({"t": "i", "n": sequence * 4, "k": [RIGHT] * 4}))
                 await asyncio.sleep(0.07)
             held = await latest(hunter)
-            check("the hunter cannot move while they hide", held["me"]["x"] == start, f"x={held['me']['x']}")
+            check("the hunter has no body to move while they hide", held["me"]["x"] == start, f"x={held['me']['x']}")
 
             moved_start = (await latest(hider))["me"]["x"]
             for sequence in range(1, 9):
@@ -118,7 +118,8 @@ async def main(base: str) -> int:
                 await hunter.send(json.dumps({"t": "i", "n": sequence * 4, "k": [RIGHT] * 4}))
                 await asyncio.sleep(0.07)
             released = await latest(hunter)
-            check("the hunter moves once seeking starts", released["me"]["x"] > free_start)
+            check("nor once seeking starts", released["me"]["x"] == free_start, f"x={released['me']['x']}")
+            check("and the hider is shown no hunter", (await latest(hider))["o"] == [])
 
             result = await wait_for_phase(hunter, "result")
             check(

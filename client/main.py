@@ -38,6 +38,7 @@ WIDTH, HEIGHT = 960, 540
 PING_INTERVAL = 1.0
 ART_INTERVAL = 0.3      # seconds between sendings of my painting, at the least
 MAX_ZOOM = 16.0
+HUNTER_MAX_ZOOM = MAX_ZOOM / 2      # the hunter looks half as closely as a painter paints
 ZOOM_STEP = 1.25
 BODY_COLOR = (210, 120, 90)
 WALK_MIN_SPEED = 30.0   # px/s; slower than this on the ground is standing, not stepping
@@ -133,6 +134,7 @@ async def play(
     seconds_left = 0
     round_number = 0
     winner: str | None = None
+    look: tuple[float, float] | None = None     # where the hunter's zoomed view is centred
     misses_left: int | None = None      # the hunter's wrong guesses still allowed; None from an older server
 
     player_id = "-"
@@ -163,12 +165,13 @@ async def play(
 
     def put_down_tools() -> None:
         """Out of freeze mode on this side: brush up, palette shut, camera back."""
-        nonlocal frozen
+        nonlocal frozen, look
         frozen = False
         panel.eyedropper = False
         panel.on_mouse_up()
         brush.release()
         renderer.zoom = 1.0
+        look = None
         stand_up()
 
     outcome: str | None = None
@@ -226,6 +229,12 @@ async def play(
             elif event.type == pygame.MOUSEWHEEL and frozen:
                 renderer.zoom = max(1.0, min(MAX_ZOOM, renderer.zoom * ZOOM_STEP**event.y))
                 brush.lift()
+            elif event.type == pygame.MOUSEWHEEL and role == "hunter" and phase == "seeking":
+                # The hunter has no body to walk up to things with: the wheel
+                # brings the spot under the cursor closer instead.
+                zoom = max(1.0, min(HUNTER_MAX_ZOOM, renderer.zoom * ZOOM_STEP**event.y))
+                look = renderer.focus_keeping(pygame.mouse.get_pos(), zoom) if zoom > 1.0 else None
+                renderer.zoom = zoom
             elif key == pygame.K_m:
                 minimap.toggle()
             elif key == pygame.K_n:
@@ -273,9 +282,8 @@ async def play(
             # waiting room, watching, or caught, the server acknowledges no
             # frames, and the unacknowledged ones would pile up for as long
             # as the wait lasts, each snapshot replaying all of them.
-            if role in ("hunter", "chameleon") and phase != "waiting" and not caught:
-                blind = phase == "hiding" and role == "hunter"
-                idle = blind or phase == "result" or menu is not None
+            if role == "chameleon" and phase != "waiting" and not caught:
+                idle = phase == "result" or menu is not None
                 # Frozen keys slide the pinned body instead of walking it.
                 mask = 0 if idle else sample_frozen() if frozen else sample()
                 for _ in range(pacer.frames(now)):
@@ -347,7 +355,8 @@ async def play(
                 role = me["rl"]
                 caught = me["ct"]
                 minimap.note_visit(me["rm"])
-                predictor.reconcile(me, message["n"])
+                if role == "chameleon" and not caught:
+                    predictor.reconcile(me, message["n"])
                 interpolator.push(message["o"])
             elif kind == "b":
                 interpolator.drop(message["id"])
@@ -382,28 +391,26 @@ async def play(
         drawn_me = None
         body_target = None
         pose = POSES[pose_bar.selected] if frozen else "stand"
-        if me is not None:
-            if caught:
-                # Watching through a hunter's eyes: no prediction of my own,
-                # and their stride is read off their motion like anyone else's.
-                x, y = float(me["x"]), float(me["y"])
-                walking, direction = None, 0
-            else:
-                x, y = predictor.render_position()
-                body = predictor.body
-                walking = (
-                    body is not None
-                    and body.on_ground
-                    and not body.frozen
-                    and abs(body.vx) >= WALK_MIN_SPEED
-                )
-                direction = 0 if body is None or abs(body.vx) < WALK_MIN_SPEED else (1 if body.vx > 0 else -1)
+        if me is not None and (role != "chameleon" or caught):
+            # No body of my own to follow or draw: the hunter has none, and the
+            # caught and the latecomers only watch. The room fills the view,
+            # or the spot the hunter has zoomed in on.
+            centre = renderer.room_centre(me["rm"])
+            room_id = me["rm"] or game_map.room_at(*centre) or room_id
+            renderer.frame(room_id, *(look or centre))
+        elif me is not None:
+            x, y = predictor.render_position()
+            body = predictor.body
+            walking = (
+                body is not None
+                and body.on_ground
+                and not body.frozen
+                and abs(body.vx) >= WALK_MIN_SPEED
+            )
+            direction = 0 if body is None or abs(body.vx) < WALK_MIN_SPEED else (1 if body.vx > 0 else -1)
             walk_frame = gait.frame("me", x, y, walking, direction) if pose == "stand" else None
             drawn_pose = "walk" if walk_frame is not None else pose
-            painted = role == "chameleon" and not caught
-            if not painted:
-                sprite = body_shape.solid_sprite(me["c"], drawn_pose, walk_frame or 0)
-            elif drawn_pose == "stand":
+            if drawn_pose == "stand":
                 sprite = body_shape.sprite(canvas.surface, pose)
             else:
                 # Other poses show cells the standing figure hides.
@@ -415,11 +422,8 @@ async def play(
             # server last reported: that is a round trip behind, so the body
             # would run out of the picture before the camera followed. In a
             # doorway between rooms it keeps the room it came from.
-            if caught:
-                room_id = me["rm"]
-            else:
-                here = game_map.room_at(x + tuning["player_width"] / 2, y + tuning["player_height"] / 2)
-                room_id = here if here is not None else room_id
+            here = game_map.room_at(x + tuning["player_width"] / 2, y + tuning["player_height"] / 2)
+            room_id = here if here is not None else room_id
             # Zoomed in to paint, centre on the figure itself; a lying body
             # would otherwise run under the palette.
             focus = (
@@ -428,7 +432,7 @@ async def play(
                 else (x + tuning["player_width"] / 2, y + tuning["player_height"] / 2)
             )
             renderer.frame(room_id, *focus)
-            if frozen and painted:
+            if frozen:
                 body_target = PaintTarget(renderer.body_rect(pose, x, y), pose)
 
         status = [

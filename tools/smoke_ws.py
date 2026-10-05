@@ -111,16 +111,17 @@ async def main(base: str) -> int:
             check("ping round trip", pong.get("ts") == 12345)
 
             # --- physics ---------------------------------------------------
+            # The hider's: the hunter has no body.
             # A body is stepped once for each input frame its client sends, so
             # it falls to the floor only once there are frames, keys or none.
-            start = (await hold(first, 0, batches=8))["me"]
+            start = (await hold(second, 0, batches=8))["me"]
             check("snapshot carries my position", "x" in start and "y" in start, str(start))
             check("spawn lands on the floor", start["g"] is True, f"y={start['y']}")
 
-            wall = await hold(first, LEFT, batches=20)
+            wall = await hold(second, LEFT, batches=40)
             check("walls stop movement", wall["me"]["x"] <= 34, f"x={wall['me']['x']}")
 
-            walked = await hold(first, RIGHT, batches=8)
+            walked = await hold(second, RIGHT, batches=8)
             check(
                 "holding right moves right",
                 walked["me"]["x"] > wall["me"]["x"],
@@ -133,13 +134,13 @@ async def main(base: str) -> int:
                 f"n={walked['n']}",
             )
 
-            airborne = await hold(first, JUMP, batches=3)
+            airborne = await hold(second, JUMP, batches=3)
             check(
                 "jumping leaves the floor",
                 airborne["me"]["y"] < start["y"],
                 f"{start['y']} -> {airborne['me']['y']}",
             )
-            landed = await hold(first, 0, batches=20)
+            landed = await hold(second, 0, batches=20)
             check(
                 "gravity brings me back down",
                 abs(landed["me"]["y"] - start["y"]) < 1 and landed["me"]["g"] is True,
@@ -155,10 +156,12 @@ async def main(base: str) -> int:
                 f"rm={together['me']['rm']}",
             )
             check(
-                "same room means each client sees the other",
+                "the hunter sees the chameleon in it",
                 any(o["i"] == hello_second["id"] for o in together["o"]),
                 str(together["o"]),
             )
+            unseen = await latest_snapshot(second)
+            check("and the chameleon sees no hunter: there is no body to see", unseen["o"] == [], str(unseen["o"]))
 
             # --- painting ---------------------------------------------------
             await second.send(json.dumps({"t": "p", "c": [10, 200, 30]}))
@@ -213,9 +216,16 @@ async def main(base: str) -> int:
                 f"slid {slide:.1f}px, walked {walk:.1f}px in the same time",
             )
 
+            before = (await latest_snapshot(first))["me"]
             await first.send(json.dumps({"t": "f", "v": True}))
-            await asyncio.sleep(0.2)
-            check("hunters cannot freeze", (await latest_snapshot(first))["me"]["fz"] is False)
+            await first.send(json.dumps({"t": "i", "n": 1, "k": [RIGHT] * 8}))
+            await asyncio.sleep(0.3)
+            after = await latest_snapshot(first)
+            check(
+                "a hunter's keys move and freeze nothing",
+                after["me"]["fz"] is False and after["me"]["x"] == before["x"] and after["n"] == 0,
+                f"{before['x']} -> {after['me']['x']}, n={after['n']}",
+            )
 
             # --- accusing ----------------------------------------------------
             await first.send(json.dumps({"t": "a", "x": 0, "y": 0}))
@@ -236,7 +246,7 @@ async def main(base: str) -> int:
 
             spectating = await latest_snapshot(second)
             check(
-                "a caught player watches through the hunter",
+                "a caught player watches from where the hunter does",
                 abs(spectating["me"]["x"] - (await latest_snapshot(first))["me"]["x"]) <= 2,
                 f"sees x={spectating['me']['x']}",
             )
