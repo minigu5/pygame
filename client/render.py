@@ -127,16 +127,18 @@ class Renderer:
             self._blit_world(self.map.world, self._room_pixels(room))
 
         for other in others:
-            # Only a colour comes over the wire, and no pose: a flat standing
-            # figure, walking side-on when it moves.
-            frame = other.get("frame")
-            if frame is None:
-                sprite = body_shape.solid_sprite(other["c"], "stand")
-            else:
-                sprite = body_shape.solid_sprite(other["c"], "walk", frame)
-                if other.get("facing", 1) < 0:
-                    sprite = pygame.transform.flip(sprite, True, False)
-            self._draw_body(sprite, "stand", other["x"], other["y"])
+            sprite = other.get("sprite")
+            if sprite is None:
+                # No painting given for this one: a flat standing figure,
+                # walking side-on when it moves.
+                frame = other.get("frame")
+                if frame is None:
+                    sprite = body_shape.solid_sprite(other["c"], "stand")
+                else:
+                    sprite = body_shape.solid_sprite(other["c"], "walk", frame)
+                    if other.get("facing", 1) < 0:
+                        sprite = pygame.transform.flip(sprite, True, False)
+            self._draw_body(sprite, other.get("pose", "stand"), other["x"], other["y"])
         if me is not None:
             self._draw_body(me["sprite"], me["pose"], me["x"], me["y"], mark=True)
 

@@ -10,6 +10,11 @@ export type ClientMessage =
   | { t: "f"; v: boolean; n?: number }
   | { t: "p"; c: [number, number, number] }
   | { t: "a"; x: number; y: number }
+  // The chameleon's whole painting, as the client packs it (see client/body_art.py).
+  // The server does not look inside; it hands it to whoever can see the body.
+  | { t: "art"; d: string }
+  // The pose a frozen chameleon holds: 0 standing, 1 crouching, 2 lying. Looks only.
+  | { t: "ps"; v: number }
   // Host only, while the room waits: deal the first round.
   | { t: "start" }
   // Host only, while the room waits: any subset of the room's settings.
@@ -21,6 +26,7 @@ export type PlayerView = {
   y: number;
   fz: boolean;
   c: [number, number, number];
+  ps: number;
 };
 
 export type Snapshot = {
@@ -74,4 +80,5 @@ export type ServerMessage =
   | { t: "b"; id: string }
   | { t: "c"; id: string; by: string }
   | { t: "cd"; until: number }
+  | { t: "art"; id: string; d: string }
   | Snapshot;

@@ -24,6 +24,9 @@ const HIDER_SPAWN_LEAD = tuning.player_width * 3;
 const HIDER_SPAWN_GAP = tuning.player_width * 2;
 
 const DEFAULT_COLOR: [number, number, number] = [210, 120, 90];
+// A 96x128 painting packed by the client is 50 KB at its very worst.
+const MAX_ART_CHARS = 64_000;
+const POSES = 3;
 
 // Whole pixels would put a body resting at y=112.6 a pixel into the floor on
 // the client, which then nudges it back up: a tenth keeps snapshots short
@@ -38,6 +41,12 @@ type Player = {
   socket: WebSocket;
   body: Body;
   color: [number, number, number];
+  // The painting on the body, and how many times it has changed.
+  art: string | null;
+  artVersion: number;
+  // Which version of each other player's painting this client has been sent.
+  artSeen: Map<string, number>;
+  pose: number;
   caught: boolean;
   room: string | null;
   watching: string | null;
@@ -104,6 +113,10 @@ export class RoomDO implements DurableObject {
       socket: server,
       body: spawnBody(map.spawn.chameleon),
       color: [...DEFAULT_COLOR],
+      art: null,
+      artVersion: 0,
+      artSeen: new Map(),
+      pose: 0,
       caught: false,
       room: null,
       watching: null,
@@ -193,6 +206,8 @@ export class RoomDO implements DurableObject {
     this.clock.wait();
     for (const player of this.players.values()) {
       player.role = "spectator";
+      player.art = null;
+      player.pose = 0;
       player.caught = false;
       player.watching = null;
       player.pending = [];
@@ -217,6 +232,9 @@ export class RoomDO implements DurableObject {
     for (const id of ids) {
       const player = this.players.get(id)!;
       player.role = id === hunterId ? "hunter" : "chameleon";
+      // Each round is painted afresh; the clients send theirs again.
+      player.art = null;
+      player.pose = 0;
       player.caught = false;
       player.watching = null;
       player.accuseReadyAt = 0;
@@ -280,6 +298,20 @@ export class RoomDO implements DurableObject {
         player.color = channels.map((value) =>
           Math.max(0, Math.min(255, Math.round(value))),
         ) as [number, number, number];
+        break;
+      }
+      case "art": {
+        if (player.role !== "chameleon") break;
+        if (typeof message.d !== "string" || message.d.length > MAX_ART_CHARS) break;
+        player.art = message.d;
+        player.artVersion++;
+        break;
+      }
+      case "ps": {
+        if (player.role !== "chameleon") break;
+        if (Number.isInteger(message.v) && message.v >= 0 && message.v < POSES) {
+          player.pose = message.v;
+        }
         break;
       }
       case "a": {
@@ -475,12 +507,20 @@ export class RoomDO implements DurableObject {
         // Filtering by room, not by viewport: a player in another room is
         // never sent, so a modified client cannot reveal one.
         if (other.room !== eyes.room) continue;
+        // The painting goes the same way, and only when it has changed: it
+        // says which room its owner means to hide in.
+        if (other.art !== null && player.artSeen.get(other.id) !== other.artVersion) {
+          player.artSeen.set(other.id, other.artVersion);
+          this.send(player, { t: "art", id: other.id, d: other.art });
+        }
         others.push({
           i: other.id,
           x: tenths(other.body.x),
           y: tenths(other.body.y),
           fz: other.body.frozen,
           c: other.color,
+          // A pose is held only while frozen.
+          ps: other.body.frozen ? other.pose : 0,
         });
       }
 

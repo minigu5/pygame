@@ -11,6 +11,7 @@ import pygame
 
 import body_shape
 from audio import Audio
+from body_art import ArtBook, pack
 from body_canvas import BodyCanvas
 from body_shape import POSE_LABELS, POSES
 from fonts import has_korean, ui_font
@@ -33,6 +34,7 @@ from waiting import WaitingRoom
 
 WIDTH, HEIGHT = 960, 540
 PING_INTERVAL = 1.0
+ART_INTERVAL = 0.3      # seconds between sendings of my painting, at the least
 MAX_ZOOM = 16.0
 ZOOM_STEP = 1.25
 BODY_COLOR = (210, 120, 90)
@@ -98,6 +100,10 @@ def play(
     interpolator = Interpolator(1000 / tuning["snapshot_hz"])
     panel = PaintPanel(ui_font(14), BODY_COLOR)
     canvas = BodyCanvas(BODY_COLOR)
+    art_book = ArtBook()                # the other players' paintings
+    art_sent: int | None = None         # the canvas version the server has, if any
+    next_art = 0.0
+    pose_sent = 0
     # Without any Korean font the labels would all be the same empty boxes.
     ascii_labels = not has_korean()
     brush = Brush(ui_font(14), canvas, ascii_labels)
@@ -267,9 +273,19 @@ def play(
             if now >= next_ping:
                 connection.send({"t": "ping", "ts": int(now * 1000)})
                 next_ping = now + PING_INTERVAL
-            changed = panel.take_change()
-            if changed is not None:
-                connection.send({"t": "p", "c": list(changed)})
+            # The palette's colour is the brush's, not the body's: nothing to send.
+            panel.take_change()
+            if role == "chameleon" and phase in ("hiding", "seeking") and not caught:
+                # What the others see is this painting, so it goes out whenever
+                # a stroke has ended; extended, so it covers every pose.
+                if canvas.version != art_sent and not brush.pressed and now >= next_art:
+                    connection.send({"t": "art", "d": pack(canvas.extended())})
+                    art_sent = canvas.version
+                    next_art = now + ART_INTERVAL
+                held_pose = pose_bar.selected if frozen else 0
+                if held_pose != pose_sent:
+                    connection.send({"t": "ps", "v": held_pose})
+                    pose_sent = held_pose
         elif connection.ended and outcome is None:
             # Refused at the door or cut off in the middle: either way the
             # lobby is where to go, with the reason on show there.
@@ -285,6 +301,8 @@ def play(
                 rtt_ms = now * 1000 - message["ts"]
             elif kind == "r":
                 waiting.update(message)
+            elif kind == "art":
+                art_book.put(message["id"], message["d"])
             elif kind == "s":
                 me = message["me"]
                 if message["ph"] != phase:
@@ -299,6 +317,10 @@ def play(
                     minimap.visited.clear()
                     predictor.reset()
                     gait.clear()
+                    # The server forgets every painting and pose with the round.
+                    art_book.clear()
+                    art_sent = None
+                    pose_sent = 0
                 phase = message["ph"]
                 seconds_left = message["left"]
                 winner = message.get("win")
@@ -310,9 +332,11 @@ def play(
             elif kind == "b":
                 interpolator.drop(message["id"])
                 gait.forget(message["id"])
+                art_book.forget(message["id"])
             elif kind == "c":
                 interpolator.drop(message["id"])
                 gait.forget(message["id"])
+                art_book.forget(message["id"])
                 audio.play("caught")
                 if message["id"] == player_id:
                     put_down_tools()
@@ -326,6 +350,17 @@ def play(
             # A frozen body that moves is being slid into place, not walking.
             other["frame"] = gait.frame(other["i"], other["x"], other["y"], False if other["fz"] else None)
             other["facing"] = gait.facing(other["i"])
+            # Drawn as its owner painted and posed it, once the painting has
+            # come; until then the renderer falls back to a flat figure.
+            held = other.get("ps", 0)
+            if other["frame"] is not None:
+                other["pose"] = "walk"
+            else:
+                other["pose"] = POSES[held] if other["fz"] and 0 <= held < len(POSES) else "stand"
+            painted_body = art_book.sprite(other["i"], other["pose"], other["frame"] or 0)
+            if painted_body is not None and other["pose"] == "walk" and other["facing"] < 0:
+                painted_body = pygame.transform.flip(painted_body, True, False)
+            other["sprite"] = painted_body
         drawn_me = None
         body_target = None
         pose = POSES[pose_bar.selected] if frozen else "stand"

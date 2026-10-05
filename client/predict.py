@@ -156,6 +156,7 @@ class Interpolator:
                     "y": start["y"] + (end["y"] - start["y"]) * ratio,
                     "fz": end["fz"],
                     "c": end["c"],
+                    "ps": end.get("ps", 0),
                 }
             )
         return blended
