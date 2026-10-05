@@ -13,7 +13,7 @@ import time
 
 from websockets.asyncio.client import connect
 
-LEFT, RIGHT, JUMP = 1, 2, 4
+LEFT, RIGHT, JUMP, UP = 1, 2, 4, 8
 
 failures: list[str] = []
 
@@ -176,19 +176,43 @@ async def main(base: str) -> int:
             resting = await latest_snapshot(second)
             await second.send(json.dumps({"t": "f", "v": True}))
             await asyncio.sleep(0.1)
-            held = await hold(second, RIGHT, batches=8)
+            held = await hold(second, 0, batches=8)
             check(
                 "freezing pins the chameleon in place",
                 held["me"]["fz"] is True and held["me"]["x"] == resting["me"]["x"],
                 f"{resting['me']['x']} -> {held['me']['x']}",
             )
 
+            # Frozen keys slide the body: slower than a walk, and with no
+            # gravity, so it stays wherever it is left.
+            slid = await hold(second, RIGHT, batches=8)
+            slide = slid["me"]["x"] - held["me"]["x"]
+            check(
+                "a frozen chameleon slides slowly sideways",
+                slid["me"]["fz"] is True and slide > 0,
+                f"{held['me']['x']} -> {slid['me']['x']}",
+            )
+            raised = await hold(second, UP, batches=8)
+            check(
+                "and upwards, off the floor",
+                raised["me"]["y"] < slid["me"]["y"],
+                f"{slid['me']['y']} -> {raised['me']['y']}",
+            )
+            hung = await hold(second, 0, batches=8)
+            check(
+                "where it stays without falling",
+                hung["me"]["y"] == raised["me"]["y"] and hung["me"]["x"] == raised["me"]["x"],
+                f"{raised['me']['y']} -> {hung['me']['y']}",
+            )
+
             await second.send(json.dumps({"t": "f", "v": False}))
             await asyncio.sleep(0.1)
             released = await hold(second, RIGHT, batches=8)
+            walk = released["me"]["x"] - hung["me"]["x"]
             check(
-                "unfreezing lets it move again",
-                released["me"]["fz"] is False and released["me"]["x"] > held["me"]["x"],
+                "unfreezing lets it walk again, faster than it slid",
+                released["me"]["fz"] is False and walk > 2 * slide,
+                f"slid {slide:.1f}px, walked {walk:.1f}px in the same time",
             )
 
             await first.send(json.dumps({"t": "f", "v": True}))

@@ -18,7 +18,7 @@ from hud import KOREAN_FONTS, Hud
 from minimap import Minimap
 from net import Connection
 from physics import Physics
-from playerinput import InputBatcher, sample
+from playerinput import InputBatcher, sample, sample_frozen
 from predict import Interpolator, Predictor
 from render import Renderer
 from ui_bar import ButtonBar
@@ -187,11 +187,13 @@ def main() -> int:
                 panel.on_mouse_move(event.pos)
                 brush.move(event.pos, paint_target(event.pos), panel.color)
 
+        audio.paint(brush.take_stamped())
         now = time.monotonic()
         if connection.status == "connected":
             blind = phase == "hiding" and role == "hunter"
             idle = blind or phase in ("waiting", "result") or caught
-            mask = 0 if frozen or idle else sample()
+            # Frozen keys slide the pinned body instead of walking it.
+            mask = 0 if idle else sample_frozen() if frozen else sample()
             frame, message = batcher.push(mask)
             predictor.step(frame, mask)
             if message is not None:
@@ -253,7 +255,8 @@ def main() -> int:
 
         others = interpolator.at_now()
         for other in others:
-            other["frame"] = gait.frame(other["i"], other["x"], other["y"])
+            # A frozen body that moves is being slid into place, not walking.
+            other["frame"] = gait.frame(other["i"], other["x"], other["y"], False if other["fz"] else None)
             other["facing"] = gait.facing(other["i"])
         drawn_me = None
         body_target = None

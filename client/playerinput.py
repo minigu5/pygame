@@ -29,6 +29,22 @@ def sample() -> int:
     return mask
 
 
+def sample_frozen() -> int:
+    """This frame's key mask while frozen: WASD slide the pinned body, W
+    upwards rather than jumping. The arrows are left out, they pick the pose."""
+    keys = pygame.key.get_pressed()
+    mask = 0
+    if keys[pygame.K_a]:
+        mask |= LEFT
+    if keys[pygame.K_d]:
+        mask |= RIGHT
+    if keys[pygame.K_w]:
+        mask |= UP
+    if keys[pygame.K_s]:
+        mask |= DOWN
+    return mask
+
+
 class InputBatcher:
     """Collects one mask per frame and releases them `batch_size` at a time.
 

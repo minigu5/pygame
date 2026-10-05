@@ -36,13 +36,26 @@ export function spawnBody(at: [number, number]): Body {
 
 /** Advance one body by a single tick. `mask` is this frame's key bitmask. */
 export function step(body: Body, mask: number, dtMs: number): void {
+  const dt = dtMs / 1000;
+
   if (body.frozen) {
+    // Pinned, not stuck: the keys slide the body slowly in any direction,
+    // free of gravity, so it can be set exactly where it should hide.
+    const slideX = ((mask & RIGHT) !== 0 ? 1 : 0) - ((mask & LEFT) !== 0 ? 1 : 0);
+    const slideY = ((mask & DOWN) !== 0 ? 1 : 0) - ((mask & UP) !== 0 ? 1 : 0);
+    if (slideX !== 0 || slideY !== 0) {
+      // It may be left hanging in the air, so it is no longer standing on
+      // anything: no stair step while sliding and no jump out of nowhere after.
+      body.onGround = false;
+      body.coyoteMs = 0;
+      moveX(body, slideX * tuning.frozen_move_speed * dt);
+      moveY(body, slideY * tuning.frozen_move_speed * dt);
+    }
     body.vx = 0;
     body.vy = 0;
     return;
   }
 
-  const dt = dtMs / 1000;
   const wantsJump = (mask & JUMP) !== 0;
 
   // A ladder suspends gravity while the body is on it; jumping lets go.

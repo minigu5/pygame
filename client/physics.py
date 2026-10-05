@@ -63,12 +63,24 @@ class Physics:
         return False
 
     def step(self, body: Body, mask: int, dt_ms: float) -> None:
+        tuning = self.tuning
+        dt = dt_ms / 1000
+
         if body.frozen:
+            # Pinned, not stuck: the keys slide the body slowly in any direction,
+            # free of gravity, so it can be set exactly where it should hide.
+            slide_x = (1 if mask & RIGHT else 0) - (1 if mask & LEFT else 0)
+            slide_y = (1 if mask & DOWN else 0) - (1 if mask & UP else 0)
+            if slide_x or slide_y:
+                # It may be left hanging in the air, so it is no longer standing on
+                # anything: no stair step while sliding and no jump out of nowhere after.
+                body.on_ground = False
+                body.coyote_ms = 0.0
+                self._move_x(body, slide_x * tuning["frozen_move_speed"] * dt)
+                self._move_y(body, slide_y * tuning["frozen_move_speed"] * dt)
             body.vx = body.vy = 0.0
             return
 
-        tuning = self.tuning
-        dt = dt_ms / 1000
         wants_jump = bool(mask & JUMP)
 
         # A ladder suspends gravity while the body is on it; jumping lets go.

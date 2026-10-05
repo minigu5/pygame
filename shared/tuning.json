@@ -11,6 +11,7 @@
   "player_height": 32,
   "step_height": 10,
   "climb_speed": 150,
+  "frozen_move_speed": 60,
   "coyote_ms": 100,
   "jump_buffer_ms": 120,
   "short_hop_factor": 0.5,

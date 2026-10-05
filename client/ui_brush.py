@@ -62,6 +62,7 @@ class Brush:
         self._last: tuple[float, float] | None = None     # last stamp, in the pose's cells
         self._last_pose: str | None = None
         self._hover: tuple[int, int] | None = None         # cursor on screen when over the body
+        self._stamped = False                              # paint went down since take_stamped()
 
     @property
     def tool(self) -> int:
@@ -91,6 +92,12 @@ class Brush:
         paint = self.canvas.base if erases else color
         self._walk(self._last or cell, cell, target.pose, radius, paint)
         self._last = cell
+        self._stamped = True
+
+    def take_stamped(self) -> bool:
+        """True once after paint has gone down, so the caller can sound the brush."""
+        stamped, self._stamped = self._stamped, False
+        return stamped
 
     def lift(self) -> None:
         """Breaks the line without ending the stroke, e.g. when the view changes
