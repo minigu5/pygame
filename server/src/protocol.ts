@@ -18,7 +18,7 @@ export type ClientMessage =
   // Host only, while the room waits: deal the first round.
   | { t: "start" }
   // Host only, while the room waits: any subset of the room's settings.
-  | { t: "cfg"; name?: string; max?: number; hide?: number; seek?: number; result?: number };
+  | { t: "cfg"; name?: string; max?: number; hide?: number; seek?: number; result?: number; bg?: string };
 
 export type PlayerView = {
   i: string;
@@ -61,6 +61,7 @@ export type RoomInfo = {
   hide: number;        // phase lengths in seconds
   seek: number;
   result: number;
+  bg: string;          // the room's background, an id from the map's backgrounds
 };
 
 // What the lobby lists. No ids, positions or colours: nothing that says where anyone is.

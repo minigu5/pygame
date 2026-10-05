@@ -54,8 +54,8 @@ from playerinput import JUMP, RIGHT  # noqa: E402
 from predict import Predictor  # noqa: E402
 from render import Renderer  # noqa: E402
 
-# The chameleon spawns in the kitchen; the route runs it through the pantry
-# into the store, freezing once on the ground and once in the air.
+# The chameleon spawns mid-room; the route runs it to the right-hand wall,
+# freezing once on the ground and once in the air.
 SCRIPT: dict[int, int] = {}
 
 
@@ -148,9 +148,9 @@ rooms = []
 for entry in log:
     if entry["room"] is not None and (not rooms or rooms[-1] != entry["room"]):
         rooms.append(entry["room"])
-check("the camera's room follows the body", rooms == ["1F-kitchen", "1F-pantry", "1F-store"], f"{rooms}")
-last = log[-1]
-check("the camera ends up framing the store", abs(last["camera"][0] - (2240 + 320 - 480)) < 200, f"camera x {last['camera'][0]:.0f} body x {last['focus'][0]:.0f}")
+check("the camera frames the one room throughout", rooms == ["room"], f"{rooms}")
+cameras = {(round(entry["camera"][0]), round(entry["camera"][1])) for entry in log}
+check("and holds still on it while the body walks", len(cameras) == 1, f"{sorted(cameras)[:4]}")
 
 print()
 print("all checks passed" if not failures else f"{len(failures)} check(s) failed")

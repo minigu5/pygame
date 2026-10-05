@@ -112,7 +112,7 @@ def play(
     body_target: PaintTarget | None = None
     minimap = Minimap(game_map, ui_font(12), ui_font(13))
     hud = Hud()
-    waiting = WaitingRoom(tuning["room_limits"])
+    waiting = WaitingRoom(tuning["room_limits"], game_map.backgrounds)
     menu: Dialog | None = None      # the Esc menu, while it is up
     gait = Gait()
     frozen = False
@@ -301,6 +301,7 @@ def play(
                 rtt_ms = now * 1000 - message["ts"]
             elif kind == "r":
                 waiting.update(message)
+                game_map.set_background(message.get("bg"))
             elif kind == "art":
                 art_book.put(message["id"], message["d"])
             elif kind == "s":
@@ -437,16 +438,18 @@ def play(
             watching=role == "spectator",
             connecting=me is None,
         )
-        minimap.draw(
-            screen,
-            room_id,
-            (
-                (drawn_me["x"] + tuning["player_width"] / 2, drawn_me["y"] + tuning["player_height"] / 2)
-                if drawn_me
-                else None
-            ),
-            show_visited=role == "hunter",
-        )
+        if len(game_map.rooms) > 1:
+            # A plan of a single room would say nothing.
+            minimap.draw(
+                screen,
+                room_id,
+                (
+                    (drawn_me["x"] + tuning["player_width"] / 2, drawn_me["y"] + tuning["player_height"] / 2)
+                    if drawn_me
+                    else None
+                ),
+                show_visited=role == "hunter",
+            )
         if frozen:
             panel.draw(screen)
             brush_bar = brush.bar.draw_above(screen, panel.layout(screen))

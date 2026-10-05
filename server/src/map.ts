@@ -24,6 +24,8 @@ export type GameMap = {
   solid: number[][];
   fg: number[][];
   rooms: Room[];
+  // What a host may dress the room in; the first is the default.
+  backgrounds: { id: string; name: string }[];
   spawn: Record<string, [number, number]>;
 };
 

@@ -143,20 +143,13 @@ async def main(base: str) -> int:
                 landed["me"]["y"] == start["y"] and landed["me"]["g"] is True,
             )
 
-            # --- rooms gate visibility -------------------------------------
-            apart = await latest_snapshot(first)
+            # --- one room, shared ------------------------------------------
+            together = await latest_snapshot(first)
             check(
-                "players in different rooms are not sent",
-                apart["me"]["rm"] != (await latest_snapshot(second))["me"]["rm"]
-                and apart["o"] == [],
-                f"hunter in {apart['me']['rm']}, sees {len(apart['o'])}",
-            )
-
-            together = await hold(first, RIGHT, batches=75)
-            check(
-                "the hunter reaches the next room",
-                together["me"]["rm"] == "1F-kitchen",
-                f"rm={together['me']['rm']} x={together['me']['x']}",
+                "everyone is in the one room",
+                together["me"]["rm"] == "room"
+                and (await latest_snapshot(second))["me"]["rm"] == "room",
+                f"rm={together['me']['rm']}",
             )
             check(
                 "same room means each client sees the other",

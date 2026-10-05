@@ -19,7 +19,7 @@ const MAX_CATCHUP_TICKS = 8;
 const MAX_INPUT_BACKLOG = 6;
 // How often a room with players tells the lobby list it is still there.
 const HEARTBEAT_TICKS = 30 * tuning.tick_hz;
-// Hiders are dealt out leftwards from here, so a full room still fits the kitchen.
+// Hiders are dealt out leftwards from here, so a full room still fits between the walls.
 const HIDER_SPAWN_LEAD = tuning.player_width * 3;
 const HIDER_SPAWN_GAP = tuning.player_width * 2;
 
@@ -72,6 +72,7 @@ export class RoomDO implements DurableObject {
     hideMs: 0,
     seekMs: 0,
     resultMs: 0,
+    background: map.backgrounds[0].id,
   };
   private clock = new RoundClock(this.options);
   private timer: number | null = null;
@@ -166,6 +167,7 @@ export class RoomDO implements DurableObject {
       hide: this.options.hideMs / 1000,
       seek: this.options.seekMs / 1000,
       result: this.options.resultMs / 1000,
+      bg: this.options.background,
     });
   }
 
@@ -501,9 +503,12 @@ export class RoomDO implements DurableObject {
   private sendSnapshots(): void {
     for (const player of this.players.values()) {
       const eyes = this.viewpoint(player);
+      // Everyone shares the one room, so no wall keeps the hunter from
+      // watching the others hide: it is sent nobody until the seeking starts.
+      const blind = this.clock.phase === "hiding" && eyes.role === "hunter";
       const others = [];
       for (const other of this.players.values()) {
-        if (other.id === eyes.id || other.caught) continue;
+        if (other.id === eyes.id || other.caught || blind) continue;
         // Filtering by room, not by viewport: a player in another room is
         // never sent, so a modified client cannot reveal one.
         if (other.room !== eyes.room) continue;

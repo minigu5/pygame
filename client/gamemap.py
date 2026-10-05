@@ -9,7 +9,8 @@ from typing import Any
 import pygame
 
 SHARED = Path(__file__).resolve().parent.parent / "shared"
-# A picture here named after a room's id ("1F-lobby.jpg") replaces that room's wallpaper.
+# A picture here named after a background's id ("sea.jpg") is what the room
+# wears when its host picks that background.
 ROOM_ART = Path(__file__).resolve().parent / "assets" / "rooms"
 ROOM_ART_TYPES = (".png", ".jpg", ".jpeg", ".webp")
 
@@ -23,6 +24,8 @@ class GameMap:
         self.solid: list[list[int]] = data["solid"]
         self.fg: list[list[int]] = data["fg"]
         self.rooms: list[dict[str, Any]] = data["rooms"]
+        self.backgrounds: list[dict[str, str]] = data.get("backgrounds", [])
+        self.background: str | None = None      # the id of the one in use
         self.spawn: dict[str, list[int]] = data["spawn"]
 
         self.pixel_width = self.width * self.tile_size
@@ -32,7 +35,7 @@ class GameMap:
         self._world: pygame.Surface | None = None
         self._world_dim: pygame.Surface | None = None
         self._foreground: pygame.Surface | None = None
-        self._art: dict[str, pygame.Surface] | None = None
+        self._art: dict[str, pygame.Surface | None] = {}
 
     @property
     def world(self) -> pygame.Surface:
@@ -75,26 +78,34 @@ class GameMap:
                 return room
         return None
 
+    def set_background(self, background: str | None) -> None:
+        """Dress the room in the background its host chose."""
+        if background != self.background:
+            self.background = background
+            self._world = self._world_dim = None
+
     def _render_world(self, dim: bool = False) -> pygame.Surface:
-        """Wallpaper, then the room pictures over it, then walls and floors on top."""
+        """Wallpaper, then the background's picture over each room, then walls and floors on top."""
         surface = self._render_layers((self.bg,), dim=dim)
         size = self.tile_size
-        for room_id, picture in self._room_art().items():
-            x, y, _, _ = self.room_by_id(room_id)["rect"]
-            surface.blit(_drain_picture(picture) if dim else picture, (x * size, y * size))
+        for room in self.rooms:
+            x, y, w, h = room["rect"]
+            picture = self._picture(self.background, (w * size, h * size))
+            if picture is not None:
+                surface.blit(_drain_picture(picture) if dim else picture, (x * size, y * size))
         return self._render_layers((self.solid,), dim=dim, onto=surface)
 
-    def _room_art(self) -> dict[str, pygame.Surface]:
-        if self._art is None:
-            self._art = {}
-            size = self.tile_size
-            for path in sorted(ROOM_ART.glob("*")):
-                room = self.room_by_id(path.stem)
-                if room is None or path.suffix.lower() not in ROOM_ART_TYPES:
-                    continue
-                _, _, w, h = room["rect"]
-                self._art[room["id"]] = _cover(pygame.image.load(str(path)), (w * size, h * size))
-        return self._art
+    def _picture(self, background: str | None, size: tuple[int, int]) -> pygame.Surface | None:
+        """The background's picture cut to `size`, or None when there is none: the wallpaper shows."""
+        # Only ids the map lists are looked up, so a name from the server never reaches the disk.
+        if not any(entry["id"] == background for entry in self.backgrounds):
+            return None
+        key = (background, size)
+        if key not in self._art:
+            paths = [ROOM_ART / f"{background}{suffix}" for suffix in ROOM_ART_TYPES]
+            path = next((path for path in paths if path.is_file()), None)
+            self._art[key] = None if path is None else _cover(pygame.image.load(str(path)), size)
+        return self._art[key]
 
     def _render_layers(
         self,

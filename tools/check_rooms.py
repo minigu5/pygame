@@ -1,21 +1,25 @@
-"""Check that rooms look like different places.
+"""Check the one room and the backgrounds it can wear.
 
-Hiding means matching the room you stand in, so two rooms that share a
-wallpaper are one hiding place wearing two names, and a room with a single
-flat colour gives a hider nothing to work with.
+The map is a single walled room; which picture hangs in it is the host's
+choice among the map's backgrounds. Each of those should have a picture here,
+and choosing one should change what the room looks like.
 
 Usage: python tools/check_rooms.py
 """
 
 from __future__ import annotations
 
+import os
 import sys
-from collections import Counter
 from pathlib import Path
+
+os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "client"))
 
-from gamemap import GameMap  # noqa: E402
+import pygame  # noqa: E402
+
+from gamemap import ROOM_ART, ROOM_ART_TYPES, GameMap  # noqa: E402
 
 failures: list[str] = []
 
@@ -27,52 +31,48 @@ def check(label: str, ok: bool, detail: str = "") -> None:
 
 
 def main() -> int:
+    pygame.init()
+    pygame.display.set_mode((960, 540))
     game_map = GameMap.load("map_01")
-    living = [room for room in game_map.rooms if not room.get("stairs")]
 
-    check("the building has rooms enough to search", len(living) >= 10, f"{len(living)} rooms")
+    check("the map is a single room", len(game_map.rooms) == 1, f"{len(game_map.rooms)} rooms")
+    x, y, w, h = game_map.rooms[0]["rect"]
+    size = game_map.tile_size
+    walled = all(
+        game_map.palette[game_map.solid[row][column]]["solid"]
+        for row in range(y - 1, y + h + 1)
+        for column in range(x - 1, x + w + 1)
+        if not (x <= column < x + w and y <= row < y + h)
+    )
+    check("and it is walled in on every side", walled)
+    spawns = {
+        role: game_map.room_at(px + 12, py + 16) for role, (px, py) in game_map.spawn.items()
+    }
+    check("everyone spawns inside it", all(spawns.values()), str(spawns))
 
-    palettes: dict[str, frozenset[int]] = {}
-    thin: list[str] = []
-    for room in living:
-        x, y, w, h = room["rect"]
-        used = Counter(
-            game_map.bg[row][column]
-            for row in range(y, y + h)
-            for column in range(x, x + w)
-        )
-        palettes[room["id"]] = frozenset(index for index, count in used.items() if count >= 4)
-        if len(palettes[room["id"]]) < 3:
-            thin.append(f"{room['id']}({len(palettes[room['id']])})")
+    ids = [entry["id"] for entry in game_map.backgrounds]
+    check("the host has backgrounds to choose from", len(ids) >= 2 and len(set(ids)) == len(ids), ", ".join(ids))
+    missing = [
+        key for key in ids if not any((ROOM_ART / f"{key}{suffix}").is_file() for suffix in ROOM_ART_TYPES)
+    ]
+    check("every background has its picture", not missing, ", ".join(missing))
 
+    # The middle of the room, as each background paints it.
+    centre = ((x + w // 2) * size, (y + h // 2) * size)
+    plain = tuple(game_map.world.get_at(centre))
+    looks = {}
+    for key in ids:
+        game_map.set_background(key)
+        looks[key] = pygame.image.tobytes(game_map.world, "RGB")
+    check("choosing a background changes the room", len(set(looks.values())) == len(ids) - len(missing))
+
+    game_map.set_background("no-such-background")
     check(
-        "every room offers more than one shade to match",
-        not thin,
-        ", ".join(thin),
+        "a background the map does not list leaves the wallpaper",
+        tuple(game_map.world.get_at(centre)) == plain,
     )
 
-    seen: dict[frozenset[int], str] = {}
-    clashes: list[str] = []
-    for room_id, palette in palettes.items():
-        if palette in seen:
-            clashes.append(f"{seen[palette]} = {room_id}")
-        seen[palette] = room_id
-    check("no two rooms are decorated alike", not clashes, ", ".join(clashes))
-
-    colours = {
-        room_id: frozenset(
-            tuple(game_map.palette[index]["color"] or (0, 0, 0)) for index in palette
-        )
-        for room_id, palette in palettes.items()
-    }
-    shared = [
-        f"{a} / {b}"
-        for index, (a, first) in enumerate(colours.items())
-        for b, second in list(colours.items())[index + 1 :]
-        if first == second
-    ]
-    check("no two rooms share a colour scheme", not shared, ", ".join(shared))
-
+    pygame.quit()
     print()
     print("all checks passed" if not failures else f"{len(failures)} check(s) failed")
     return 1 if failures else 0

@@ -1,4 +1,4 @@
-import { tuning } from "./map";
+import { map, tuning } from "./map";
 import type { Phase, Winner } from "./protocol";
 
 const SECOND = 1000;
@@ -10,6 +10,7 @@ export type RoomOptions = {
   hideMs: number;
   seekMs: number;
   resultMs: number;
+  background: string;   // an id from the map's backgrounds
 };
 
 /** What the host may change from the waiting room; seconds, as the client shows them. */
@@ -19,6 +20,7 @@ export type RoomChanges = {
   hide?: unknown;
   seek?: unknown;
   result?: unknown;
+  bg?: unknown;
 };
 
 /** Room settings start from the link the first player opens, within limits. */
@@ -30,6 +32,7 @@ export function readOptions(url: URL, code: string): RoomOptions {
     hideMs: clamp(params.get("hide"), tuning.hide_seconds, LIMITS.hide) * SECOND,
     seekMs: clamp(params.get("seek"), tuning.seek_seconds, LIMITS.seek) * SECOND,
     resultMs: clamp(params.get("result"), tuning.result_seconds, LIMITS.result) * SECOND,
+    background: knownBackground(params.get("bg")) ?? map.backgrounds[0].id,
   };
 }
 
@@ -44,6 +47,11 @@ export function applyChanges(options: RoomOptions, changes: RoomChanges, players
   options.hideMs = clamp(changes.hide, options.hideMs / SECOND, LIMITS.hide) * SECOND;
   options.seekMs = clamp(changes.seek, options.seekMs / SECOND, LIMITS.seek) * SECOND;
   options.resultMs = clamp(changes.result, options.resultMs / SECOND, LIMITS.result) * SECOND;
+  options.background = knownBackground(changes.bg) ?? options.background;
+}
+
+function knownBackground(raw: unknown): string | null {
+  return map.backgrounds.some((background) => background.id === raw) ? (raw as string) : null;
 }
 
 function clamp(raw: unknown, fallback: number, [low, high]: number[]): number {

@@ -71,7 +71,7 @@ async def main(base: str) -> int:
 
     check("a room nobody is in is not listed", await listed(base, code) is None)
 
-    async with connect(f"{url}&name={quote('숨바꼭질 한 판')}&hide=5&seek=10&result=2") as host:
+    async with connect(f"{url}&name={quote('숨바꼭질 한 판')}&hide=5&seek=10&result=2&bg=jelly") as host:
         hello = await recv_kind(host, "hello")
         opened = await recv_kind(host, "r")
         check(
@@ -113,6 +113,17 @@ async def main(base: str) -> int:
             str(changed),
         )
         check("settings stay within their limits", changed["seek"] == 600, f"seek {changed['seek']}")
+
+        check("the room opens with the background its link asks for", opened["bg"] == "jelly", opened["bg"])
+        await host.send(json.dumps({"t": "cfg", "bg": "sea"}))
+        dressed = await room_info(host, lambda info: info["bg"] != "jelly")
+        await host.send(json.dumps({"t": "cfg", "bg": "../etc/passwd"}))
+        kept_bg = await room_info(host, lambda info: True)
+        check(
+            "the host picks another background, and only one the map lists",
+            dressed["bg"] == "sea" and kept_bg["bg"] == "sea",
+            f"{dressed['bg']}, then {kept_bg['bg']}",
+        )
 
         async with connect(url) as guest:
             guest_hello = await recv_kind(guest, "hello")

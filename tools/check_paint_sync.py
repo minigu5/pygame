@@ -1,8 +1,8 @@
 """Check that a hunter sees the body a chameleon actually painted.
 
-The painting and the pose travel through the server to whoever is in the same
-room, and to nobody else: a painting says which room its owner means to hide
-in, so it must not reach a hunter who has not found the room yet.
+The painting and the pose travel through the server to whoever can see the
+body, and to nobody else: a painting says where its owner means to hide, so
+it must not reach the hunter while the hiding is still going on.
 
 Run `npm run dev --prefix server` first, then:
     .venv/bin/python tools/check_paint_sync.py [ws://127.0.0.1:8787]
@@ -117,26 +117,29 @@ async def main(base: str) -> int:
 
         await hider.send({"t": "art", "d": packed})
         await hunter.send({"t": "art", "d": packed})
-        await hunter.until(lambda s: s["ph"] == "seeking")
+        await asyncio.sleep(1.0)
+        blind = hunter.snapshot
         check(
-            "a painting does not reach a hunter in another room",
+            "the hunter is shown nobody while the others hide",
+            blind["ph"] == "hiding" and blind["o"] == [],
+            f"{blind['ph']}, sees {len(blind['o'])}",
+        )
+        check(
+            "nor is it sent a painting yet",
             hunter.art == [],
             f"{len(hunter.art)} received",
         )
 
-        for _ in range(12):
-            if hunter.snapshot["me"]["rm"] == hider.snapshot["me"]["rm"]:
-                break
-            await hunter.hold(RIGHT, 10)
+        await hunter.until(lambda s: s["ph"] == "seeking")
         await asyncio.sleep(0.3)
         together = hunter.snapshot
         check(
-            "the hunter finds the chameleon's room",
+            "the hunter sees the chameleon once the seeking starts",
             any(other["i"] == hider.id for other in together["o"]),
-            f"hunter in {together['me']['rm']}",
+            f"sees {len(together['o'])}",
         )
         check(
-            "and is sent the chameleon's painting on walking in, once",
+            "and is sent the chameleon's painting then, once",
             len(hunter.art) == 1 and hunter.art[0]["id"] == hider.id and hunter.art[0]["d"] == packed,
             f"{len(hunter.art)} received",
         )

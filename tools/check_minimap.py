@@ -35,10 +35,30 @@ def colour_count(screen: pygame.Surface, colour: tuple[int, int, int]) -> int:
     return mask.count()
 
 
+# The game's own map is a single room now, which the client draws no plan
+# for; the plan is checked against a small building of its own.
+ROOMS = [
+    {"id": "1F-lobby", "name": "lobby", "floor": 1, "rect": [1, 8, 10, 6]},
+    {"id": "1F-kitchen", "name": "kitchen", "floor": 1, "rect": [12, 8, 10, 6]},
+    {"id": "1F-store", "name": "store", "floor": 1, "rect": [23, 8, 10, 6]},
+    {"id": "2F-attic", "name": "attic", "floor": 2, "rect": [1, 1, 32, 6]},
+]
+BUILDING = {
+    "tile_size": 32,
+    "size": [34, 15],
+    "palette": [{"name": "empty", "color": None, "solid": False}],
+    "bg": [],
+    "solid": [],
+    "fg": [],
+    "rooms": ROOMS,
+    "spawn": {"hunter": [96, 384]},
+}
+
+
 def main() -> int:
     pygame.init()
     screen = pygame.display.set_mode((960, 540))
-    game_map = GameMap.load("map_01")
+    game_map = GameMap(BUILDING)
     minimap = Minimap(
         game_map,
         pygame.font.SysFont("menlo,monospace", 12),
@@ -47,7 +67,7 @@ def main() -> int:
 
     check(
         "every room is on the plan",
-        len(game_map.rooms) == 25,
+        len(game_map.rooms) == len(ROOMS),
         f"{len(game_map.rooms)} rooms",
     )
 

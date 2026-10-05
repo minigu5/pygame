@@ -60,8 +60,8 @@ def main() -> int:
         for char in literals(path):
             shown.setdefault(char, path.name)
     game_map = json.loads((ROOT / "shared" / "map_01.json").read_text(encoding="utf-8"))
-    for room in game_map["rooms"]:
-        for char in room["name"]:
+    for entry in game_map["rooms"] + game_map["backgrounds"]:
+        for char in entry["name"]:
             shown.setdefault(char, "map_01.json")
 
     visible = {char: source for char, source in shown.items() if ord(char) > 126 and char.isprintable()}

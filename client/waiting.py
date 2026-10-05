@@ -29,8 +29,9 @@ SETTINGS = (
 
 
 class WaitingRoom:
-    def __init__(self, limits: dict[str, Any]) -> None:
+    def __init__(self, limits: dict[str, Any], backgrounds: list[dict[str, str]]) -> None:
         self.limits = limits
+        self.backgrounds = backgrounds              # the map's, as {"id", "name"}
         self.info: dict[str, Any] | None = None     # the server's last "r" message
         self.outbox: list[dict[str, Any]] = []      # messages for the server
         self.leaving = False                        # the leave button was pressed
@@ -38,6 +39,7 @@ class WaitingRoom:
         self.start = Button("게임 시작", primary=True)
         self.leave = Button("방 나가기")
         self._steppers = {field: (Button("", sign=-1), Button("", sign=1)) for field, *_ in SETTINGS}
+        self._background = (Button("<"), Button(">"))
 
     def update(self, info: dict[str, Any]) -> None:
         self.info = {**info, "name": readable(str(info.get("name", "")))}
@@ -54,6 +56,10 @@ class WaitingRoom:
         if field == "max" and self.info is not None:
             low = max(low, self.info["n"])      # cannot shut out someone already here
         return low, high
+
+    def _background_index(self) -> int:
+        chosen = self.info.get("bg") if self.info is not None else None
+        return next((index for index, entry in enumerate(self.backgrounds) if entry["id"] == chosen), 0)
 
     def _commit_name(self) -> None:
         wanted = " ".join(self.name.text.split())
@@ -97,12 +103,19 @@ class WaitingRoom:
                     self.info[field] = value
                     self.outbox.append({"t": "cfg", field: value})
                     return True
+        for button, change in zip(self._background, (-1, 1)):
+            if button.hit(event.pos):
+                # Round and round: the list has no ends.
+                chosen = self.backgrounds[(self._background_index() + change) % len(self.backgrounds)]
+                self.info["bg"] = chosen["id"]
+                self.outbox.append({"t": "cfg", "bg": chosen["id"]})
+                return True
         return False
 
     def draw(self, screen: pygame.Surface, player_id: str) -> None:
         info = self.info
         host = self._is_host(player_id)
-        rows = len(SETTINGS) + 1 if info is not None else 0
+        rows = len(SETTINGS) + 2 if info is not None else 0
         height = 86 + rows * ROW_HEIGHT + 110
         box = pygame.Rect(0, 0, PANEL_WIDTH, height)
         box.center = screen.get_rect().center
@@ -178,3 +191,16 @@ class WaitingRoom:
             plus.enabled = info[key] < high
             minus.draw(screen, pygame.Rect(value_x - 70 - STEP_SIZE, centre_y - STEP_SIZE // 2, STEP_SIZE, STEP_SIZE))
             plus.draw(screen, pygame.Rect(value_x + 70, centre_y - STEP_SIZE // 2, STEP_SIZE, STEP_SIZE))
+
+        centre_y = top + (len(SETTINGS) + 1) * ROW_HEIGHT + ROW_HEIGHT // 2 - 4
+        label = font.render("배경", True, DIM)
+        screen.blit(label, label.get_rect(midleft=(left, centre_y)))
+        chosen = self.backgrounds[self._background_index()]["name"] if self.backgrounds else "-"
+        value = font.render(readable(chosen), True, TEXT)
+        screen.blit(value, value.get_rect(center=(value_x, centre_y)))
+        earlier, later = self._background
+        if not host or len(self.backgrounds) < 2:
+            earlier.rect = later.rect = pygame.Rect(0, 0, 0, 0)
+            return
+        earlier.draw(screen, pygame.Rect(value_x - 70 - STEP_SIZE, centre_y - STEP_SIZE // 2, STEP_SIZE, STEP_SIZE))
+        later.draw(screen, pygame.Rect(value_x + 70, centre_y - STEP_SIZE // 2, STEP_SIZE, STEP_SIZE))
