@@ -16,7 +16,6 @@
   "jump_buffer_ms": 120,
   "short_hop_factor": 0.5,
   "accuse_radius": 24,
-  "accuse_cooldown_ms": 3000,
   "accuse_misses": 3,
   "hide_seconds": 60,
   "seek_seconds": 120,

@@ -87,6 +87,8 @@ class Predictor:
     def _from_server(body: Body, state: dict[str, Any]) -> Body:
         body.x = float(state["x"])
         body.y = float(state["y"])
+        # The walk speeds up and slows down, so where the replay ends depends on this too.
+        body.vx = float(state.get("vx", body.vx))
         body.vy = float(state["vy"])
         body.on_ground = bool(state["g"])
         body.frozen = bool(state["fz"])

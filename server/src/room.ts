@@ -7,9 +7,6 @@ import { RoundClock, applyChanges, otherBackground, readOptions, type RoomOption
 const TICK_MS = 1000 / tuning.tick_hz;
 const SNAPSHOT_EVERY = Math.round(tuning.tick_hz / tuning.snapshot_hz);
 
-// Keep replaying the last input for a moment so a late packet does not read as
-// the player letting go of every key.
-const INPUT_COAST_TICKS = 8;
 // A timer that fires late is made up for by running the missed ticks at once,
 // up to this many, so the simulation keeps wall-clock time.
 const MAX_CATCHUP_TICKS = 8;
@@ -50,12 +47,9 @@ type Player = {
   caught: boolean;
   room: string | null;
   watching: string | null;
-  accuseReadyAt: number;
   pending: PendingInput[];
   // A freeze toggle for an input frame that has not been queued yet.
   freezeAt: { n: number; v: boolean } | null;
-  lastMask: number;
-  coastTicks: number;
   ackInput: number;
 };
 
@@ -122,11 +116,8 @@ export class RoomDO implements DurableObject {
       caught: false,
       room: null,
       watching: null,
-      accuseReadyAt: 0,
       pending: [],
       freezeAt: null,
-      lastMask: 0,
-      coastTicks: 0,
       ackInput: 0,
     };
     this.players.set(player.id, player);
@@ -215,7 +206,6 @@ export class RoomDO implements DurableObject {
       player.watching = null;
       player.pending = [];
       player.freezeAt = null;
-      player.lastMask = 0;
       player.body = spawnBody(map.spawn.chameleon);
       player.room = null;
     }
@@ -241,10 +231,8 @@ export class RoomDO implements DurableObject {
       player.pose = 0;
       player.caught = false;
       player.watching = null;
-      player.accuseReadyAt = 0;
       player.pending = [];
       player.freezeAt = null;
-      player.lastMask = 0;
       player.body = spawnBody(map.spawn[player.role] ?? map.spawn.chameleon);
       // Spread the hiders out so they do not all start on one tile.
       if (player.role === "chameleon") {
@@ -320,8 +308,6 @@ export class RoomDO implements DurableObject {
       }
       case "a": {
         if (player.role !== "hunter" || this.clock.phase !== "seeking") break;
-        const now = Date.now();
-        if (now < player.accuseReadyAt) break;
         const hit = this.chameleonAt(message.x, message.y);
         if (hit) {
           hit.caught = true;
@@ -332,9 +318,10 @@ export class RoomDO implements DurableObject {
         } else {
           // A hunter who clicks everything in sight runs out of guesses,
           // and with them the round.
+          // Every wrong click is one guess: there is no wait between them in
+          // which a click would count for nothing.
           this.missesLeft--;
-          player.accuseReadyAt = now + tuning.accuse_cooldown_ms;
-          this.send(player, { t: "cd", until: player.accuseReadyAt, left: this.missesLeft });
+          this.send(player, { t: "cd", left: this.missesLeft });
           if (this.missesLeft <= 0) this.endRound("chameleons");
         }
         break;
@@ -438,19 +425,17 @@ export class RoomDO implements DurableObject {
         this.clock.phase === "result" || (hunterWaits && player.role === "hunter");
       const steps = player.pending.length > MAX_INPUT_BACKLOG ? 2 : 1;
       for (let i = 0; i < steps; i++) {
+        // One step for each frame the client played, and none of its own: a
+        // step made up while a packet was late put the body a frame ahead of
+        // what its owner predicted, and the correction showed as a twitch
+        // and a creep after stopping. A late packet now only delays the body.
         const next = player.pending.shift();
-        if (next === undefined) {
-          player.coastTicks++;
-          if (player.coastTicks > INPUT_COAST_TICKS) player.lastMask = 0;
-        } else {
-          player.lastMask = next.mask;
-          player.ackInput = next.n;
-          player.coastTicks = 0;
-          if (next.freeze !== undefined && player.role === "chameleon") {
-            player.body.frozen = next.freeze;
-          }
+        if (next === undefined) break;
+        player.ackInput = next.n;
+        if (next.freeze !== undefined && player.role === "chameleon") {
+          player.body.frozen = next.freeze;
         }
-        step(player.body, held ? 0 : player.lastMask, TICK_MS);
+        step(player.body, held ? 0 : next.mask, TICK_MS);
       }
       player.room = roomAt(
         player.body.x + tuning.player_width / 2,
@@ -550,6 +535,7 @@ export class RoomDO implements DurableObject {
         me: {
           x: tenths(eyes.body.x),
           y: tenths(eyes.body.y),
+          vx: tenths(eyes.body.vx),
           vy: tenths(eyes.body.vy),
           g: eyes.body.onGround,
           fz: eyes.body.frozen,

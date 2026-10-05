@@ -45,6 +45,46 @@ def sample_frozen() -> int:
     return mask
 
 
+class FramePacer:
+    """How many input frames to play for each frame drawn.
+
+    The server steps the body once for every input frame, a sixtieth of a
+    second each, so the frames have to come at that rate whatever the screen
+    does. Near it, one a frame is right and a little drift is the server's to
+    absorb. Far from it (a slow browser, a 144Hz display) they are counted
+    out by the clock instead, or the body would crawl or sprint.
+    """
+
+    LOCKED = (0.85, 1.15)   # input frames per drawn frame taken as "the same rate"
+    MOST = 6                # input frames in one drawn frame; a longer stall is not made up
+
+    def __init__(self, frame_seconds: float) -> None:
+        self.frame_seconds = frame_seconds
+        self.last: float | None = None
+        self.rate = 1.0     # input frames per drawn frame, smoothed
+        self.owed = 0.0
+
+    def rest(self) -> None:
+        """Nothing is being played: the time that passes meanwhile is not owed."""
+        self.last = None
+        self.owed = 0.0
+
+    def frames(self, now: float) -> int:
+        if self.last is None:
+            self.last = now
+            return 1
+        elapsed = min((now - self.last) / self.frame_seconds, self.MOST)
+        self.last = now
+        self.rate += (elapsed - self.rate) * 0.1
+        if self.LOCKED[0] <= self.rate <= self.LOCKED[1]:
+            self.owed = 0.0
+            return 1
+        self.owed += elapsed
+        count = int(self.owed)
+        self.owed -= count
+        return count
+
+
 class InputBatcher:
     """Collects one mask per frame and releases them `batch_size` at a time.
 

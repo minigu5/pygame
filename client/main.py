@@ -24,7 +24,7 @@ from lobby import Lobby
 from minimap import Minimap
 from net import Connection
 from physics import Physics
-from playerinput import InputBatcher, sample, sample_frozen
+from playerinput import FramePacer, InputBatcher, sample, sample_frozen
 from predict import Interpolator, Predictor
 from render import Renderer
 from ui_bar import ButtonBar
@@ -106,6 +106,7 @@ async def play(
 
     renderer = Renderer(screen, game_map, tuning)
     batcher = InputBatcher(tuning["input_batch"])
+    pacer = FramePacer(1 / tuning["tick_hz"])
     physics = Physics(game_map, tuning)
     predictor = Predictor(physics, 1000 / tuning["tick_hz"])
     interpolator = Interpolator(1000 / tuning["snapshot_hz"])
@@ -128,7 +129,6 @@ async def play(
     gait = Gait()
     frozen = False
     caught = False
-    cooldown_until = 0.0
     phase = "waiting"
     seconds_left = 0
     round_number = 0
@@ -249,7 +249,7 @@ async def play(
                 event.type == pygame.MOUSEBUTTONDOWN
                 and event.button == 1
                 and role == "hunter"
-                and time.monotonic() >= cooldown_until
+                and phase == "seeking"
             ):
                 world_x, world_y = renderer.to_world(*event.pos)
                 connection.send({"t": "a", "x": world_x, "y": world_y})
@@ -278,10 +278,13 @@ async def play(
                 idle = blind or phase == "result" or menu is not None
                 # Frozen keys slide the pinned body instead of walking it.
                 mask = 0 if idle else sample_frozen() if frozen else sample()
-                frame, message = batcher.push(mask)
-                predictor.step(frame, mask)
-                if message is not None:
-                    connection.send(message)
+                for _ in range(pacer.frames(now)):
+                    frame, message = batcher.push(mask)
+                    predictor.step(frame, mask)
+                    if message is not None:
+                        connection.send(message)
+            else:
+                pacer.rest()
             if now >= next_ping:
                 connection.send({"t": "ping", "ts": int(now * 1000)})
                 next_ping = now + PING_INTERVAL
@@ -359,8 +362,6 @@ async def play(
                     put_down_tools()
             elif kind == "cd":
                 audio.play("miss")
-                # The server's timestamp is wall clock; only the length matters.
-                cooldown_until = now + tuning["accuse_cooldown_ms"] / 1000
 
         others = interpolator.at_now()
         for other in others:
@@ -430,15 +431,13 @@ async def play(
             if frozen and painted:
                 body_target = PaintTarget(renderer.body_rect(pose, x, y), pose)
 
-        remaining = max(0.0, cooldown_until - now)
         status = [
             f"{role}  id {player_id}  {connection.status}"
             + ("  CAUGHT - spectating" if caught else ""),
             f"rtt {'-' if rtt_ms is None else f'{rtt_ms:.0f}ms'}  room {me['rm'] or '-' if me else '-'}"
             + ("  FROZEN" if frozen else ""),
             f"pos {drawn_me['x']:.0f},{drawn_me['y']:.0f}" if drawn_me else "pos -",
-            f"unacked {len(predictor.history)}  peers {len(others)}"
-            + (f"  accuse in {remaining:.1f}s" if remaining > 0 else ""),
+            f"unacked {len(predictor.history)}  peers {len(others)}",
         ]
 
         renderer.draw(room_id, drawn_me, others, status)

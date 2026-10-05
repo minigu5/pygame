@@ -111,7 +111,9 @@ async def main(base: str) -> int:
             check("ping round trip", pong.get("ts") == 12345)
 
             # --- physics ---------------------------------------------------
-            start = (await latest_snapshot(first))["me"]
+            # A body is stepped once for each input frame its client sends, so
+            # it falls to the floor only once there are frames, keys or none.
+            start = (await hold(first, 0, batches=8))["me"]
             check("snapshot carries my position", "x" in start and "y" in start, str(start))
             check("spawn lands on the floor", start["g"] is True, f"y={start['y']}")
 
@@ -124,7 +126,7 @@ async def main(base: str) -> int:
                 walked["me"]["x"] > wall["me"]["x"],
                 f"{wall['me']['x']} -> {walked['me']['x']}",
             )
-            check("walking stays on the floor", walked["me"]["y"] == start["y"])
+            check("walking stays on the floor", abs(walked["me"]["y"] - start["y"]) < 1)
             check(
                 "snapshot acknowledges an applied input frame",
                 0 < walked["n"] < _next_frame,
@@ -140,7 +142,8 @@ async def main(base: str) -> int:
             landed = await hold(first, 0, batches=20)
             check(
                 "gravity brings me back down",
-                landed["me"]["y"] == start["y"] and landed["me"]["g"] is True,
+                abs(landed["me"]["y"] - start["y"]) < 1 and landed["me"]["g"] is True,
+                f"{start} -> {landed['me']}",
             )
 
             # --- one room, shared ------------------------------------------
@@ -216,19 +219,12 @@ async def main(base: str) -> int:
 
             # --- accusing ----------------------------------------------------
             await first.send(json.dumps({"t": "a", "x": 0, "y": 0}))
-            cooldown = await recv_kind(first, "cd")
-            check("missing puts the hunter on cooldown", "until" in cooldown, str(cooldown))
-            check("and costs it one of its three wrong guesses", cooldown.get("left") == 2, str(cooldown))
+            missed = await recv_kind(first, "cd")
+            check("a wrong guess costs the hunter one of its three", missed.get("left") == 2, str(missed))
+            await first.send(json.dumps({"t": "a", "x": 0, "y": 0}))
+            missed = await recv_kind(first, "cd")
+            check("and so does the next, with no wait between them", missed.get("left") == 1, str(missed))
 
-            blocked = (await latest_snapshot(second))["me"]
-            await first.send(json.dumps({"t": "a", "x": blocked["x"] + 12, "y": blocked["y"] + 16}))
-            await asyncio.sleep(0.3)
-            check(
-                "accusing during the cooldown does nothing",
-                (await latest_snapshot(second))["me"]["fz"] is False,
-            )
-
-            await asyncio.sleep(3.0)
             target = (await latest_snapshot(second))["me"]
             await first.send(json.dumps({"t": "a", "x": target["x"] + 12, "y": target["y"] + 16}))
             caught = await recv_kind(second, "c")

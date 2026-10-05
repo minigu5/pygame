@@ -40,6 +40,7 @@ export type Snapshot = {
   me: {
     x: number;
     y: number;
+    vx: number;
     vy: number;
     g: boolean;
     fz: boolean;
@@ -81,6 +82,6 @@ export type ServerMessage =
   | { t: "j"; id: string; role: Role }
   | { t: "b"; id: string }
   | { t: "c"; id: string; by: string }
-  | { t: "cd"; until: number; left: number }
+  | { t: "cd"; left: number }   // a wrong accusation, and how many more are allowed
   | { t: "art"; id: string; d: string }
   | Snapshot;
