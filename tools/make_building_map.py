@@ -145,13 +145,12 @@ def dress_room(
             for column in range(x + ((row - y) // 4 % 2) * 4, x + w, 8):
                 fill(bg, column, row, min(4, x + w - column), min(4, y + h - row), trim)
 
-    # Furniture: something to stand behind, and something to stand on.
+    # Furniture to stand behind. Nothing to stand on: a plank in mid-air in the
+    # middle of every room was in the way and looked like nothing in particular.
     shelf_x = x + 2 + (style % 3)
     fill(bg, shelf_x, y + h - 5, 3, 4, prop)
     crate_x = x + w - 5 - (style % 2)
     fill(bg, crate_x, y + h - 3, 2, 2, prop)
-    if w >= 18:
-        fill(solid, x + w // 2 - 2, y + h - 5, 4, 1, PLANK)
 
 
 def floor_rows(floor: int) -> tuple[int, int]:
