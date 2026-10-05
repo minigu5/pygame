@@ -38,7 +38,10 @@ hunter.recv()
 def drain() -> None:
     try:
         while True:
-            hunter.recv()
+            # The hunter opened the room, so it is the host: start the round
+            # as soon as the client under test has joined.
+            if '"t":"r"' in hunter.recv():
+                hunter.send('{"t":"start"}')
     except Exception:
         pass
 

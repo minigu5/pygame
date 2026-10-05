@@ -9,6 +9,7 @@ import math
 import pygame
 
 import body_shape
+from fonts import ui_font
 from gamemap import GameMap
 
 BACKGROUND = (10, 11, 15)
@@ -25,7 +26,7 @@ class Renderer:
         self.screen = screen
         self.map = game_map
         self.tuning = tuning
-        self.font = pygame.font.SysFont("menlo,monospace", 16)
+        self.font = ui_font(15)
         self.camera = pygame.Vector2(0, 0)
         self.scale = 1.0
         self.zoom = 1.0         # extra zoom on top of the room's own, for painting

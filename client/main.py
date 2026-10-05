@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 import time
+from typing import Any
 
 import pygame
 
@@ -12,9 +13,12 @@ import body_shape
 from audio import Audio
 from body_canvas import BodyCanvas
 from body_shape import POSE_LABELS, POSES
+from fonts import has_korean, ui_font
 from gait import Gait
 from gamemap import GameMap, load_tuning
-from hud import KOREAN_FONTS, Hud
+from hud import Hud
+from keys import game_keys, latin_key
+from lobby import Lobby
 from minimap import Minimap
 from net import Connection
 from physics import Physics
@@ -24,6 +28,8 @@ from render import Renderer
 from ui_bar import ButtonBar
 from ui_brush import Brush, PaintTarget
 from ui_paint import PaintPanel, sample_map_color
+from ui_widgets import Dialog
+from waiting import WaitingRoom
 
 WIDTH, HEIGHT = 960, 540
 PING_INTERVAL = 1.0
@@ -36,7 +42,7 @@ WALK_MIN_SPEED = 30.0   # px/s; slower than this on the ground is standing, not 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--server", default="wss://chameleon.omm.run")
-    parser.add_argument("--room", default="test")
+    parser.add_argument("--room", default=None, help="join this room straight away, skipping the lobby")
     return parser.parse_args()
 
 
@@ -44,36 +50,64 @@ def main() -> int:
     args = parse_args()
     tuning = load_tuning()
 
-    connection = Connection(f"{args.server}/ws?room={args.room}")
-    connection.start()
-
     pygame.init()
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     pygame.display.set_caption("Meccha Chameleon 2D")
     clock = pygame.time.Clock()
+    game_keys()
 
     game_map = GameMap.load("map_01")
+    audio = Audio()
+
+    # Lobby, room, lobby, room... until the player quits from either.
+    query = f"room={args.room}" if args.room else None
+    notice: str | None = None
+    while True:
+        if query is None:
+            choice = Lobby(screen, clock, args.server, notice).run()
+            if choice is None:
+                break
+            query = choice.query()
+        outcome, notice = play(screen, clock, f"{args.server}/ws?{query}", game_map, tuning, audio)
+        if outcome == "quit":
+            break
+        query = None
+
+    pygame.quit()
+    return 0
+
+
+def play(
+    screen: pygame.Surface,
+    clock: pygame.time.Clock,
+    url: str,
+    game_map: GameMap,
+    tuning: dict[str, Any],
+    audio: Audio,
+) -> tuple[str, str | None]:
+    """One stay in a room, from connecting to leaving it. Returns "lobby" or
+    "quit", and what to tell the player if the stay was cut short."""
+    connection = Connection(url)
+    connection.start()
+    game_keys()
+
     renderer = Renderer(screen, game_map, tuning)
     batcher = InputBatcher(tuning["input_batch"])
     physics = Physics(game_map, tuning)
     predictor = Predictor(physics, 1000 / tuning["tick_hz"])
     interpolator = Interpolator(1000 / tuning["snapshot_hz"])
-    panel = PaintPanel(pygame.font.SysFont("menlo,monospace", 14), BODY_COLOR)
+    panel = PaintPanel(ui_font(14), BODY_COLOR)
     canvas = BodyCanvas(BODY_COLOR)
-    korean_font = pygame.font.SysFont(KOREAN_FONTS, 14)
     # Without any Korean font the labels would all be the same empty boxes.
-    ascii_labels = pygame.font.match_font(KOREAN_FONTS) is None
-    brush = Brush(korean_font, canvas, ascii_labels)
+    ascii_labels = not has_korean()
+    brush = Brush(ui_font(14), canvas, ascii_labels)
     pose_labels = body_shape.POSE_LABELS_ASCII if ascii_labels else POSE_LABELS
-    pose_bar = ButtonBar(korean_font, [pose_labels[pose] for pose in POSES])
+    pose_bar = ButtonBar(ui_font(14), [pose_labels[pose] for pose in POSES])
     body_target: PaintTarget | None = None
-    minimap = Minimap(
-        game_map,
-        pygame.font.SysFont("menlo,monospace", 12),
-        pygame.font.SysFont(KOREAN_FONTS, 13),
-    )
+    minimap = Minimap(game_map, ui_font(12), ui_font(13))
     hud = Hud()
-    audio = Audio()
+    waiting = WaitingRoom(tuning["room_limits"])
+    menu: Dialog | None = None      # the Esc menu, while it is up
     gait = Gait()
     frozen = False
     caught = False
@@ -109,19 +143,48 @@ def main() -> int:
         """Back to attention: the pose is only held while frozen."""
         pose_bar.selected = 0
 
-    running = True
-    while running:
+    def put_down_tools() -> None:
+        """Out of freeze mode on this side: brush up, palette shut, camera back."""
+        nonlocal frozen
+        frozen = False
+        panel.eyedropper = False
+        panel.on_mouse_up()
+        brush.release()
+        renderer.zoom = 1.0
+        stand_up()
+
+    outcome: str | None = None
+    notice: str | None = None
+    while outcome is None:
         for event in pygame.event.get():
+            # The key as a letter whichever way the 한/영 key is set: see keys.py.
+            key = latin_key(event) if event.type == pygame.KEYDOWN else None
+            if event.type == pygame.WINDOWFOCUSGAINED and not waiting.name.focused:
+                game_keys()     # the IME is shut out of the focused window, so once per focus
             if event.type == pygame.QUIT:
-                running = False
-            elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-                running = False
-            elif (
-                event.type == pygame.KEYDOWN
-                and event.key == pygame.K_SPACE
-                and role == "chameleon"
-                and not caught
-            ):
+                outcome = "quit"
+            elif menu is not None:
+                if key == pygame.K_ESCAPE:
+                    menu = None
+                elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    picked = menu.choice_at(event.pos)
+                    if picked == "resume":
+                        menu = None
+                    elif picked is not None:
+                        outcome = picked
+            elif phase == "waiting" and waiting.on_event(event, player_id):
+                pass
+            elif key == pygame.K_ESCAPE:
+                # Leaving is a choice, not an accident: ask first. The game
+                # does not stop behind the menu, so the brush is lifted.
+                panel.on_mouse_up()
+                brush.release()
+                menu = Dialog(
+                    "메뉴",
+                    "방을 나가면 처음 화면으로 돌아갑니다.",
+                    [("resume", "계속하기"), ("lobby", "방 나가기"), ("quit", "게임 종료")],
+                )
+            elif key == pygame.K_SPACE and role == "chameleon" and not caught:
                 frozen = not frozen
                 audio.play("freeze")
                 # Stamped with the next input frame, so the server freezes the
@@ -130,22 +193,14 @@ def main() -> int:
                 if predictor.body is not None:
                     predictor.body.frozen = frozen
                 if not frozen:
-                    panel.eyedropper = False
-                    brush.release()
-                    renderer.zoom = 1.0
-                    stand_up()
-            elif (
-                event.type == pygame.KEYDOWN
-                and event.key == pygame.K_z
-                and event.mod & pygame.KMOD_CTRL
-                and frozen
-            ):
+                    put_down_tools()
+            elif key == pygame.K_z and event.mod & pygame.KMOD_CTRL and frozen:
                 canvas.undo()
-            elif event.type == pygame.KEYDOWN and frozen and brush.bar.select_key(event.key):
+            elif key is not None and frozen and brush.bar.select_key(key):
                 panel.eyedropper = False
-            elif event.type == pygame.KEYDOWN and frozen and event.key in (pygame.K_UP, pygame.K_DOWN):
+            elif key in (pygame.K_UP, pygame.K_DOWN) and frozen:
                 # Down goes from standing to crouching to lying; up comes back.
-                step = 1 if event.key == pygame.K_DOWN else -1
+                step = 1 if key == pygame.K_DOWN else -1
                 pose_bar.selected = max(0, min(len(POSES) - 1, pose_bar.selected + step))
                 # The body is a different shape now: no painting through the
                 # old outline until the next frame draws the new one.
@@ -153,11 +208,11 @@ def main() -> int:
             elif event.type == pygame.MOUSEWHEEL and frozen:
                 renderer.zoom = max(1.0, min(MAX_ZOOM, renderer.zoom * ZOOM_STEP**event.y))
                 brush.lift()
-            elif event.type == pygame.KEYDOWN and event.key == pygame.K_m:
+            elif key == pygame.K_m:
                 minimap.toggle()
-            elif event.type == pygame.KEYDOWN and event.key == pygame.K_n:
+            elif key == pygame.K_n:
                 audio.toggle()
-            elif event.type == pygame.KEYDOWN and event.key == pygame.K_e and frozen:
+            elif key == pygame.K_e and frozen:
                 panel.toggle_eyedropper()
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and frozen:
                 if brush.bar.on_mouse_down(event.pos):
@@ -187,23 +242,38 @@ def main() -> int:
                 panel.on_mouse_move(event.pos)
                 brush.move(event.pos, paint_target(event.pos), panel.color)
 
+        for message in waiting.outbox:
+            connection.send(message)
+        waiting.outbox.clear()
+        if waiting.leaving and outcome is None:
+            outcome = "lobby"
+
         audio.paint(brush.take_stamped())
         now = time.monotonic()
         if connection.status == "connected":
-            blind = phase == "hiding" and role == "hunter"
-            idle = blind or phase in ("waiting", "result") or caught
-            # Frozen keys slide the pinned body instead of walking it.
-            mask = 0 if idle else sample_frozen() if frozen else sample()
-            frame, message = batcher.push(mask)
-            predictor.step(frame, mask)
-            if message is not None:
-                connection.send(message)
+            # Only a body the server is moving has input to send. In the
+            # waiting room, watching, or caught, the server acknowledges no
+            # frames, and the unacknowledged ones would pile up for as long
+            # as the wait lasts, each snapshot replaying all of them.
+            if role in ("hunter", "chameleon") and phase != "waiting" and not caught:
+                blind = phase == "hiding" and role == "hunter"
+                idle = blind or phase == "result" or menu is not None
+                # Frozen keys slide the pinned body instead of walking it.
+                mask = 0 if idle else sample_frozen() if frozen else sample()
+                frame, message = batcher.push(mask)
+                predictor.step(frame, mask)
+                if message is not None:
+                    connection.send(message)
             if now >= next_ping:
                 connection.send({"t": "ping", "ts": int(now * 1000)})
                 next_ping = now + PING_INTERVAL
             changed = panel.take_change()
             if changed is not None:
                 connection.send({"t": "p", "c": list(changed)})
+        elif connection.ended and outcome is None:
+            # Refused at the door or cut off in the middle: either way the
+            # lobby is where to go, with the reason on show there.
+            outcome, notice = "lobby", connection.error
 
         for message in connection.poll():
             kind = message.get("t")
@@ -213,18 +283,19 @@ def main() -> int:
                 role = message.get("role", role)
             elif kind == "pong":
                 rtt_ms = now * 1000 - message["ts"]
+            elif kind == "r":
+                waiting.update(message)
             elif kind == "s":
                 me = message["me"]
                 if message["ph"] != phase:
                     audio.play({"hiding": "hide", "seeking": "seek", "result": "result"}.get(message["ph"], ""))
-                if message["rd"] != round_number:
-                    # New round: roles are dealt again and nothing carries over.
+                    waiting.close()
+                if message["rd"] != round_number or (message["ph"] == "waiting" and phase != "waiting"):
+                    # New round, or the round fell through and everyone is back
+                    # in the waiting room: roles are dealt again and nothing
+                    # carries over.
                     round_number = message["rd"]
-                    frozen = False
-                    panel.eyedropper = False
-                    brush.release()
-                    renderer.zoom = 1.0
-                    stand_up()
+                    put_down_tools()
                     minimap.visited.clear()
                     predictor.reset()
                     gait.clear()
@@ -244,10 +315,7 @@ def main() -> int:
                 gait.forget(message["id"])
                 audio.play("caught")
                 if message["id"] == player_id:
-                    frozen = False
-                    brush.release()
-                    renderer.zoom = 1.0
-                    stand_up()
+                    put_down_tools()
             elif kind == "cd":
                 audio.play("miss")
                 # The server's timestamp is wall clock; only the length matters.
@@ -314,14 +382,12 @@ def main() -> int:
         status = [
             f"{role}  id {player_id}  {connection.status}"
             + ("  CAUGHT - spectating" if caught else ""),
-            f"rtt {'-' if rtt_ms is None else f'{rtt_ms:.0f}ms'}  room {me['rm'] if me else '-'}"
+            f"rtt {'-' if rtt_ms is None else f'{rtt_ms:.0f}ms'}  room {me['rm'] or '-' if me else '-'}"
             + ("  FROZEN" if frozen else ""),
             f"pos {drawn_me['x']:.0f},{drawn_me['y']:.0f}" if drawn_me else "pos -",
             f"unacked {len(predictor.history)}  peers {len(others)}"
             + (f"  accuse in {remaining:.1f}s" if remaining > 0 else ""),
         ]
-        if connection.error:
-            status.append(connection.error)
 
         renderer.draw(room_id, drawn_me, others, status)
         if not panel.eyedropper:
@@ -333,6 +399,8 @@ def main() -> int:
             round_number,
             winner,
             blind=phase == "hiding" and role == "hunter",
+            watching=role == "spectator",
+            connecting=me is None,
         )
         minimap.draw(
             screen,
@@ -348,12 +416,19 @@ def main() -> int:
             panel.draw(screen)
             brush_bar = brush.bar.draw_above(screen, panel.layout(screen))
             pose_bar.draw_above(screen, brush_bar)
+        if phase == "waiting" and me is not None:
+            waiting.draw(screen, player_id)
+        if menu is not None:
+            menu.draw(screen)
         pygame.display.flip()
         clock.tick(60)
 
-    connection.close()
-    pygame.quit()
-    return 0
+    waiting.close()
+    audio.hush()
+    # Wait a moment for the socket to close, so the room hears of the leaving
+    # before the lobby next asks who is in it.
+    connection.close(wait=1.0)
+    return outcome, notice
 
 
 if __name__ == "__main__":

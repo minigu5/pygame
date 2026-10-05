@@ -9,7 +9,11 @@ export type ClientMessage =
   // frame the client froze on however far behind the input queue is.
   | { t: "f"; v: boolean; n?: number }
   | { t: "p"; c: [number, number, number] }
-  | { t: "a"; x: number; y: number };
+  | { t: "a"; x: number; y: number }
+  // Host only, while the room waits: deal the first round.
+  | { t: "start" }
+  // Host only, while the room waits: any subset of the room's settings.
+  | { t: "cfg"; name?: string; max?: number; hide?: number; seek?: number; result?: number };
 
 export type PlayerView = {
   i: string;
@@ -40,8 +44,31 @@ export type Snapshot = {
   o: PlayerView[];
 };
 
+// The waiting room: sent on joining and whenever any of it changes.
+export type RoomInfo = {
+  t: "r";
+  code: string;
+  name: string;
+  host: string;        // id of the player who may start and change settings
+  n: number;           // players connected
+  max: number;
+  hide: number;        // phase lengths in seconds
+  seek: number;
+  result: number;
+};
+
+// What the lobby lists. No ids, positions or colours: nothing that says where anyone is.
+export type RoomListing = {
+  code: string;
+  name: string;
+  players: number;
+  capacity: number;
+  phase: Phase;
+};
+
 export type ServerMessage =
   | { t: "pong"; ts: number }
+  | RoomInfo
   | { t: "hello"; id: string; role: Role; tick: number; map: string }
   | { t: "j"; id: string; role: Role }
   | { t: "b"; id: string }

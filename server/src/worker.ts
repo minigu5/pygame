@@ -1,10 +1,7 @@
+import { ROOM_CODE, type Env } from "./env";
+
+export { RegistryDO } from "./registry";
 export { RoomDO } from "./room";
-
-type Env = {
-  ROOM: DurableObjectNamespace;
-};
-
-const ROOM_CODE = /^[a-z0-9-]{1,32}$/;
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -12,6 +9,14 @@ export default {
 
     if (url.pathname === "/health") {
       return new Response("ok");
+    }
+
+    if (url.pathname === "/rooms") {
+      if (request.method !== "GET") {
+        return new Response("method not allowed", { status: 405 });
+      }
+      // Only the list is public: rooms write their entries from inside.
+      return env.REGISTRY.get(env.REGISTRY.idFromName("rooms")).fetch(request);
     }
 
     if (url.pathname === "/ws") {

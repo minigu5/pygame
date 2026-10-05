@@ -132,5 +132,11 @@ class Audio:
             self._brush_channel.fadeout(BRUSH_FADE_MS)
             self._brushing = False
 
+    def hush(self) -> None:
+        """Stops the brush at once: the room was left with paint still going down."""
+        if self._brushing and self._brush_channel is not None:
+            self._brush_channel.fadeout(BRUSH_FADE_MS)
+            self._brushing = False
+
     def toggle(self) -> None:
         self.enabled = not self.enabled

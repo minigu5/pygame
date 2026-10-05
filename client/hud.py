@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import pygame
 
-# macOS, Windows, then the usual Linux packages (fonts-noto-cjk, fonts-nanum).
-KOREAN_FONTS = "applesdgothicneo,applegothic,malgungothic,notosanskr,notosanscjkkr,nanumgothic,nanumbarungothic,arialunicode"
+from fonts import ui_font
 
 PHASE_NAMES = {
     "waiting": "대기 중",
@@ -24,9 +23,9 @@ BLIND = (10, 11, 15, 238)
 
 class Hud:
     def __init__(self) -> None:
-        self.banner_font = pygame.font.SysFont(KOREAN_FONTS, 18)
-        self.big_font = pygame.font.SysFont(KOREAN_FONTS, 34)
-        self.small_font = pygame.font.SysFont(KOREAN_FONTS, 15)
+        self.banner_font = ui_font(18)
+        self.big_font = ui_font(34)
+        self.small_font = ui_font(15)
 
     def draw(
         self,
@@ -36,12 +35,16 @@ class Hud:
         round_number: int,
         winner: str | None,
         blind: bool,
+        watching: bool = False,
+        connecting: bool = False,
     ) -> None:
-        if phase == "waiting":
-            self._centre_notice(screen, "다른 플레이어를 기다리는 중", "두 명이 모이면 시작한다")
+        if connecting:
+            self._centre_notice(screen, "방에 들어가는 중", "서버에 연결하고 있습니다")
             return
+        if phase == "waiting":
+            return      # the waiting room has the screen: see waiting.py
 
-        self._banner(screen, phase, seconds_left, round_number)
+        banner = self._banner(screen, phase, seconds_left, round_number)
 
         if winner is not None and phase == "result":
             self._centre_notice(
@@ -51,8 +54,12 @@ class Hud:
             self._centre_notice(
                 screen, "카멜레온이 숨는 중", f"{seconds_left}초 뒤 찾기 시작", cover=True
             )
+        elif watching:
+            # Joined with the round under way: nothing to do until it ends.
+            note = self.small_font.render("관전 중 · 다음 판부터 함께합니다", True, DIM)
+            screen.blit(note, note.get_rect(midtop=(banner.centerx, banner.bottom + 6)))
 
-    def _banner(self, screen: pygame.Surface, phase: str, seconds_left: int, round_number: int) -> None:
+    def _banner(self, screen: pygame.Surface, phase: str, seconds_left: int, round_number: int) -> pygame.Rect:
         text = f"{round_number}라운드 · {PHASE_NAMES.get(phase, phase)} · {seconds_left}초"
         label = self.banner_font.render(text, True, TEXT)
         box = label.get_rect()
@@ -64,6 +71,7 @@ class Hud:
         pygame.draw.rect(panel, BANNER_EDGE, panel.get_rect(), width=1, border_radius=6)
         screen.blit(panel, box.topleft)
         screen.blit(label, label.get_rect(center=box.center))
+        return box
 
     def _centre_notice(
         self, screen: pygame.Surface, title: str, detail: str, cover: bool = False

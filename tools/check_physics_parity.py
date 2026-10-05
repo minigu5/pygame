@@ -49,6 +49,7 @@ async def run_on_server(base: str) -> dict:
 
         async with connect(f"{base}/ws?room={room}") as partner:
             await partner.recv()
+            await socket.send(json.dumps({"t": "start"}))   # the first one in is the host
             state = await wait_for_seeking(socket)
             assert state["me"]["rl"] == "hunter", state["me"]["rl"]
 

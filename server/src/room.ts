@@ -1,7 +1,8 @@
+import type { Env } from "./env";
 import { map, roomAt, tuning } from "./map";
 import { spawnBody, step, type Body } from "./physics";
-import type { ClientMessage, Role, ServerMessage } from "./protocol";
-import { RoundClock, readOptions, type RoomOptions } from "./rounds";
+import type { ClientMessage, Role, RoomListing, ServerMessage } from "./protocol";
+import { RoundClock, applyChanges, readOptions, type RoomOptions } from "./rounds";
 
 const TICK_MS = 1000 / tuning.tick_hz;
 const SNAPSHOT_EVERY = Math.round(tuning.tick_hz / tuning.snapshot_hz);
@@ -16,6 +17,11 @@ const MAX_CATCHUP_TICKS = 8;
 // server would otherwise fall further behind every second, and a freeze
 // pressed now would land where the body was long ago.
 const MAX_INPUT_BACKLOG = 6;
+// How often a room with players tells the lobby list it is still there.
+const HEARTBEAT_TICKS = 30 * tuning.tick_hz;
+// Hiders are dealt out leftwards from here, so a full room still fits the kitchen.
+const HIDER_SPAWN_LEAD = tuning.player_width * 3;
+const HIDER_SPAWN_GAP = tuning.player_width * 2;
 
 const DEFAULT_COLOR: [number, number, number] = [210, 120, 90];
 
@@ -50,15 +56,24 @@ export class RoomDO implements DurableObject {
   private players = new Map<string, Player>();
   private order: string[] = [];
   private hunterIndex = 0;
-  private options: RoomOptions | null = null;
-  private clock = new RoundClock({ hideMs: 0, seekMs: 0, resultMs: 0 });
+  private code = "";
+  private options: RoomOptions = {
+    name: "",
+    maxPlayers: tuning.max_players,
+    hideMs: 0,
+    seekMs: 0,
+    resultMs: 0,
+  };
+  private clock = new RoundClock(this.options);
   private timer: number | null = null;
   private tick = 0;
   private tickDue = 0;   // wall-clock time the next tick is owed at
+  private listing: Promise<void> = Promise.resolve();
+  private listingQueued = false;
 
   constructor(
     private state: DurableObjectState,
-    private env: unknown,
+    private env: Env,
   ) {}
 
   async fetch(request: Request): Promise<Response> {
@@ -66,12 +81,16 @@ export class RoomDO implements DurableObject {
       return new Response("expected websocket", { status: 426 });
     }
 
-    if (this.options === null) {
-      this.options = readOptions(new URL(request.url));
+    if (this.players.size === 0) {
+      // Whoever walks into an empty room opens it afresh, with their settings.
+      const url = new URL(request.url);
+      this.code = url.searchParams.get("room") ?? "";
+      this.options = readOptions(url, this.code);
       this.clock = new RoundClock(this.options);
+      this.hunterIndex = 0;
     }
 
-    if (this.players.size >= tuning.max_players) {
+    if (this.players.size >= this.options.maxPlayers) {
       return new Response("room is full", { status: 409 });
     }
 
@@ -111,20 +130,90 @@ export class RoomDO implements DurableObject {
     });
     this.broadcast({ t: "j", id: player.id, role: player.role }, player.id);
     this.startTicking();
-    // A round needs someone to hide from, so one player waits for another.
-    if (this.clock.phase === "waiting" && this.players.size >= 2) this.startRound();
+    // The room waits until its host starts the round; see "start" below.
+    this.broadcastRoomInfo();
+    this.publish();
 
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  /** The player who may start the round and change the settings: whoever has been here longest. */
+  private get hostId(): string {
+    return this.order[0] ?? "";
+  }
+
+  private broadcastRoomInfo(): void {
+    this.broadcast({
+      t: "r",
+      code: this.code,
+      name: this.options.name,
+      host: this.hostId,
+      n: this.players.size,
+      max: this.options.maxPlayers,
+      hide: this.options.hideMs / 1000,
+      seek: this.options.seekMs / 1000,
+      result: this.options.resultMs / 1000,
+    });
+  }
+
+  /** Tell the lobby list how this room stands now. Never in the way of the game:
+   * updates go out one at a time, each reading the room as it is when sent, so
+   * a late one cannot put back a room that has since emptied. */
+  private publish(): void {
+    if (this.listingQueued) return;
+    this.listingQueued = true;
+    this.listing = this.listing.then(async () => {
+      this.listingQueued = false;
+      try {
+        const registry = this.env.REGISTRY.get(this.env.REGISTRY.idFromName("rooms"));
+        if (this.players.size === 0) {
+          await registry.fetch(`https://registry/room?code=${this.code}`, { method: "DELETE" });
+          return;
+        }
+        const listing: RoomListing = {
+          code: this.code,
+          name: this.options.name,
+          players: this.players.size,
+          capacity: this.options.maxPlayers,
+          phase: this.clock.phase,
+        };
+        await registry.fetch("https://registry/room", {
+          method: "PUT",
+          body: JSON.stringify(listing),
+        });
+      } catch {
+        // A room missing from the list is still a room: play goes on.
+      }
+    });
+    this.state.waitUntil(this.listing);
+  }
+
+  /** Back to the waiting room: nobody has a role until the host starts again. */
+  private toWaiting(): void {
+    this.clock.wait();
+    for (const player of this.players.values()) {
+      player.role = "spectator";
+      player.caught = false;
+      player.watching = null;
+      player.pending = [];
+      player.freezeAt = null;
+      player.lastMask = 0;
+      player.body = spawnBody(map.spawn.chameleon);
+      player.room = null;
+    }
+    this.publish();
   }
 
   /** Deal roles for a round: one hunter, everyone else hides. */
   private startRound(): void {
     this.clock.startRound();
+    this.publish();
     const ids = this.order.filter((id) => this.players.has(id));
     this.order = ids;
     if (ids.length === 0) return;
 
     const hunterId = ids[this.hunterIndex % ids.length];
+    let hiders = 0;
     for (const id of ids) {
       const player = this.players.get(id)!;
       player.role = id === hunterId ? "hunter" : "chameleon";
@@ -137,13 +226,15 @@ export class RoomDO implements DurableObject {
       player.body = spawnBody(map.spawn[player.role] ?? map.spawn.chameleon);
       // Spread the hiders out so they do not all start on one tile.
       if (player.role === "chameleon") {
-        player.body.x += ids.indexOf(id) * tuning.player_width * 3;
+        player.body.x += HIDER_SPAWN_LEAD - hiders * HIDER_SPAWN_GAP;
+        hiders++;
       }
     }
   }
 
   private endRound(winner: "hunter" | "chameleons"): void {
     this.clock.finish(winner);
+    this.publish();
     for (const player of this.players.values()) player.body.frozen = true;
   }
 
@@ -208,8 +299,21 @@ export class RoomDO implements DurableObject {
         }
         break;
       }
+      case "start":
+        // A round needs someone to hide from.
+        if (player.id !== this.hostId || this.clock.phase !== "waiting") break;
+        if (this.players.size < 2) break;
+        this.startRound();
+        break;
+      case "cfg":
+        if (player.id !== this.hostId || this.clock.phase !== "waiting") break;
+        applyChanges(this.options, message, this.players.size);
+        this.broadcastRoomInfo();
+        this.publish();
+        break;
       case "i": {
-        if (player.role === "spectator") break;
+        // A body that is not being stepped would only queue these up unread.
+        if (player.role === "spectator" || player.caught) break;
         // message.n numbers the first frame in the batch; the client replays
         // everything after the frame the snapshot acknowledges.
         message.k.forEach((mask, index) => {
@@ -233,11 +337,20 @@ export class RoomDO implements DurableObject {
     if (this.players.size === 0) {
       this.stopTicking();
       this.clock.wait();
+      this.publish();
       return;
     }
-    // A round with nobody left to find, or nobody to find them, is over.
-    if (this.clock.phase !== "waiting" && (this.players.size < 2 || this.livingChameleons() === 0)) {
-      this.clock.wait();
+    // The host may have been the one to go: the next longest here takes over.
+    this.broadcastRoomInfo();
+    this.publish();
+
+    if (this.clock.phase === "waiting") return;
+    if (this.players.size < 2) {
+      this.toWaiting();
+    } else if (this.clock.phase !== "result") {
+      // A round with nobody left to look, or nobody left to find, is decided.
+      if (player.role === "hunter") this.endRound("chameleons");
+      else if (this.livingChameleons() === 0) this.endRound("hunter");
     }
   }
 
@@ -273,6 +386,7 @@ export class RoomDO implements DurableObject {
   private onTick(): void {
     this.tick++;
     this.advanceRound();
+    if (this.tick % HEARTBEAT_TICKS === 0) this.publish();
 
     const hunterWaits = this.clock.phase === "hiding";
     for (const player of this.players.values()) {
@@ -313,6 +427,7 @@ export class RoomDO implements DurableObject {
     switch (this.clock.phase) {
       case "hiding":
         this.clock.startSeeking();
+        this.publish();
         break;
       case "seeking":
         // Time ran out with someone still hidden, so the hiders win.
@@ -323,7 +438,7 @@ export class RoomDO implements DurableObject {
           this.hunterIndex++;
           this.startRound();
         } else {
-          this.clock.wait();
+          this.toWaiting();
         }
         break;
     }

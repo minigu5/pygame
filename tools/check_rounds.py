@@ -74,8 +74,18 @@ async def main(base: str) -> int:
         async with connect(f"{base}/ws?room={room}") as second:
             await second.recv()
 
+            await asyncio.sleep(0.5)
+            together = await latest(first)
+            check("two players still wait for the host", together["ph"] == "waiting", str(together["ph"]))
+
+            await second.send(json.dumps({"t": "start"}))
+            await asyncio.sleep(0.5)
+            ignored = await latest(first)
+            check("a guest cannot start the round", ignored["ph"] == "waiting", str(ignored["ph"]))
+
+            await first.send(json.dumps({"t": "start"}))
             hiding = await wait_for_phase(first, "hiding")
-            check("a second player starts the round", hiding["rd"] == 1, f"round {hiding['rd']}")
+            check("the host starts the round", hiding["rd"] == 1, f"round {hiding['rd']}")
 
             roles = {
                 (await latest(first))["me"]["rl"],

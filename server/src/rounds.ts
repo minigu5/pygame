@@ -2,26 +2,63 @@ import { tuning } from "./map";
 import type { Phase, Winner } from "./protocol";
 
 const SECOND = 1000;
+const LIMITS = tuning.room_limits;
 
 export type RoomOptions = {
+  name: string;
+  maxPlayers: number;
   hideMs: number;
   seekMs: number;
   resultMs: number;
 };
 
-/** Room settings come from the link the first player opens, within limits. */
-export function readOptions(url: URL): RoomOptions {
+/** What the host may change from the waiting room; seconds, as the client shows them. */
+export type RoomChanges = {
+  name?: unknown;
+  max?: unknown;
+  hide?: unknown;
+  seek?: unknown;
+  result?: unknown;
+};
+
+/** Room settings start from the link the first player opens, within limits. */
+export function readOptions(url: URL, code: string): RoomOptions {
+  const params = url.searchParams;
   return {
-    hideMs: clampSeconds(url.searchParams.get("hide"), tuning.hide_seconds, 5, 180),
-    seekMs: clampSeconds(url.searchParams.get("seek"), tuning.seek_seconds, 10, 600),
-    resultMs: clampSeconds(url.searchParams.get("result"), tuning.result_seconds, 2, 30),
+    name: cleanName(params.get("name")) ?? code,
+    maxPlayers: clamp(params.get("max"), tuning.max_players, LIMITS.players),
+    hideMs: clamp(params.get("hide"), tuning.hide_seconds, LIMITS.hide) * SECOND,
+    seekMs: clamp(params.get("seek"), tuning.seek_seconds, LIMITS.seek) * SECOND,
+    resultMs: clamp(params.get("result"), tuning.result_seconds, LIMITS.result) * SECOND,
   };
 }
 
-function clampSeconds(raw: string | null, fallback: number, low: number, high: number): number {
-  const parsed = raw === null ? Number.NaN : Number(raw);
-  const seconds = Number.isFinite(parsed) ? Math.min(high, Math.max(low, parsed)) : fallback;
-  return Math.round(seconds * SECOND);
+/** Applies the host's changes in place; anything missing or malformed is left as it was. */
+export function applyChanges(options: RoomOptions, changes: RoomChanges, playersNow: number): void {
+  options.name = cleanName(changes.name) ?? options.name;
+  // The room cannot shrink below the people already in it.
+  options.maxPlayers = Math.max(
+    playersNow,
+    clamp(changes.max, options.maxPlayers, LIMITS.players),
+  );
+  options.hideMs = clamp(changes.hide, options.hideMs / SECOND, LIMITS.hide) * SECOND;
+  options.seekMs = clamp(changes.seek, options.seekMs / SECOND, LIMITS.seek) * SECOND;
+  options.resultMs = clamp(changes.result, options.resultMs / SECOND, LIMITS.result) * SECOND;
+}
+
+function clamp(raw: unknown, fallback: number, [low, high]: number[]): number {
+  const parsed = raw === null || raw === undefined || raw === "" ? Number.NaN : Number(raw);
+  return Number.isFinite(parsed) ? Math.round(Math.min(high, Math.max(low, parsed))) : fallback;
+}
+
+/** A display name: one line, trimmed, no control characters; null when nothing is left. */
+function cleanName(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const name = [...raw.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim()]
+    .slice(0, LIMITS.name)
+    .join("")
+    .trim();
+  return name === "" ? null : name;
 }
 
 export class RoundClock {
@@ -30,7 +67,9 @@ export class RoundClock {
   winner: Winner | undefined;
   private endsAt = 0;
 
-  constructor(private options: RoomOptions) {}
+  // The lengths are read when a phase begins, so what the host changes in the
+  // waiting room applies to the next round.
+  constructor(private options: Pick<RoomOptions, "hideMs" | "seekMs" | "resultMs">) {}
 
   get secondsLeft(): number {
     if (this.phase === "waiting") return 0;

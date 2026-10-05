@@ -95,7 +95,9 @@ async def main(base: str) -> int:
             joined = await recv_kind(first, "j")
             check("first client sees the join", joined.get("id") == hello_second.get("id"))
 
-            # Roles are dealt when the round starts, not when a client connects.
+            # Roles are dealt when the round starts, not when a client connects,
+            # and the round starts when the host says so.
+            await first.send(json.dumps({"t": "start"}))
             await wait_for_phase(first, "seeking")
             await wait_for_phase(second, "seeking")
             check(

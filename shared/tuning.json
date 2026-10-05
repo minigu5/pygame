@@ -21,6 +21,7 @@
   "seek_seconds": 120,
   "result_seconds": 5,
   "max_players": 4,
+  "room_limits": {"players": [2, 8], "hide": [5, 180], "seek": [10, 600], "result": [2, 30], "name": 16},
   "shape_sizes": {"stand": [24, 32], "crouch": [24, 20], "lie": [36, 12]},
   "ground_accel": 1600,
   "ground_decel": 2200,
