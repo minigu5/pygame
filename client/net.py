@@ -8,6 +8,8 @@ import queue
 import threading
 from typing import Any
 
+from web import WEB, bridge
+
 # What the player is told when the connection ends; never a raw exception,
 # whose text is in whatever language the system speaks and means little anyway.
 LOST = "서버와의 연결이 끊어졌습니다."
@@ -16,9 +18,11 @@ REFUSED = {
     400: "방 코드가 올바르지 않습니다.",
     409: "방이 가득 찼습니다.",
 }
+# A browser is not told why its socket was turned away, only that it was.
+WEB_REFUSED = "방에 들어가지 못했습니다. 방이 가득 찼거나 서버에 연결할 수 없습니다."
 
 
-class Connection:
+class ThreadConnection:
     def __init__(self, url: str) -> None:
         self.url = url
         self.incoming: queue.Queue[dict[str, Any]] = queue.Queue()
@@ -104,3 +108,61 @@ class Connection:
                     continue
         except ConnectionClosed:
             return      # however it ended, _pump_out sees the reader is done
+
+
+class WebConnection:
+    """The same connection over the page's own WebSocket: see web.py."""
+
+    def __init__(self, url: str) -> None:
+        self.url = url
+        self.error: str | None = None
+        self._id: int | None = None
+        self._status = "connecting"
+
+    def start(self) -> None:
+        self._id = int(bridge().open(self.url))
+
+    def close(self, wait: float = 0.0) -> None:
+        if self._id is not None and not self.ended:
+            self._refresh()
+            bridge().close(self._id)
+            if not self.ended:
+                self._status = "closed"
+
+    @property
+    def status(self) -> str:
+        self._refresh()
+        return self._status
+
+    @property
+    def ended(self) -> bool:
+        return self.status in ("closed", "failed")
+
+    def _refresh(self) -> None:
+        if self._id is None or self._status in ("closed", "failed"):
+            return
+        self._status = str(bridge().state(self._id))
+        if self._status == "failed":
+            self.error = WEB_REFUSED
+        elif self._status == "closed":
+            self.error = LOST
+
+    def send(self, message: dict[str, Any]) -> None:
+        if self._id is not None and self.status == "connected":
+            bridge().send(self._id, json.dumps(message, separators=(",", ":")))
+
+    def poll(self) -> list[dict[str, Any]]:
+        if self._id is None:
+            return []
+        # One string a frame across the bridge; JSON never holds a bare newline.
+        raw = str(bridge().drain(self._id) or "")
+        messages = []
+        for line in raw.splitlines():
+            try:
+                messages.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        return messages
+
+
+Connection = WebConnection if WEB else ThreadConnection

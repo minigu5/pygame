@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import sys
 import time
 from typing import Any
@@ -31,6 +32,7 @@ from ui_brush import Brush, PaintTarget
 from ui_paint import PaintPanel, sample_map_color
 from ui_widgets import Dialog
 from waiting import WaitingRoom
+from web import WEB, page_server
 
 WIDTH, HEIGHT = 960, 540
 PING_INTERVAL = 1.0
@@ -45,10 +47,17 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--server", default="wss://chameleon.omm.run")
     parser.add_argument("--room", default=None, help="join this room straight away, skipping the lobby")
-    return parser.parse_args()
+    # A page has no command line; its server is the one that served it.
+    return parser.parse_args(["--server", page_server()] if WEB else None)
 
 
 def main() -> int:
+    return asyncio.run(run())
+
+
+async def run() -> int:
+    """The whole program. A coroutine, and every screen's loop with it, because
+    a browser only draws and hears keys while the program yields to it."""
     args = parse_args()
     tuning = load_tuning()
 
@@ -66,12 +75,14 @@ def main() -> int:
     notice: str | None = None
     while True:
         if query is None:
-            choice = Lobby(screen, clock, args.server, notice).run()
+            choice = await Lobby(screen, clock, args.server, notice).run()
             if choice is None:
+                if WEB:
+                    continue    # a page is left by closing its tab, not from inside
                 break
             query = choice.query()
-        outcome, notice = play(screen, clock, f"{args.server}/ws?{query}", game_map, tuning, audio)
-        if outcome == "quit":
+        outcome, notice = await play(screen, clock, f"{args.server}/ws?{query}", game_map, tuning, audio)
+        if outcome == "quit" and not WEB:
             break
         query = None
 
@@ -79,7 +90,7 @@ def main() -> int:
     return 0
 
 
-def play(
+async def play(
     screen: pygame.Surface,
     clock: pygame.time.Clock,
     url: str,
@@ -460,6 +471,7 @@ def play(
             menu.draw(screen)
         pygame.display.flip()
         clock.tick(60)
+        await asyncio.sleep(0)
 
     waiting.close()
     audio.hush()
@@ -470,4 +482,7 @@ def play(
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    if WEB:
+        main()      # only starts it there: the browser's own loop runs it from here on
+    else:
+        sys.exit(main())

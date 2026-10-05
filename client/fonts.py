@@ -9,20 +9,31 @@ through here instead.
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 
 import pygame
 
 # macOS, Windows, then the usual Linux packages (fonts-noto-cjk, fonts-nanum).
 KOREAN_FONTS = "applesdgothicneo,applegothic,malgungothic,notosanskr,notosanscjkkr,nanumgothic,nanumbarungothic,gulim,arialunicode"
+# Noto Sans KR without its Hanja (SIL Open Font License): for where there are
+# no system fonts to ask, which is every browser, and any machine with none of the above.
+BUNDLED = Path(__file__).resolve().parent / "assets" / "fonts" / "NotoSansKR-Regular.ttf"
+
+
+@lru_cache(maxsize=None)
+def _system_font() -> str | None:
+    return pygame.font.match_font(KOREAN_FONTS)
 
 
 def has_korean() -> bool:
     """False on a machine with none of the fonts: labels must then stay ASCII."""
-    return pygame.font.match_font(KOREAN_FONTS) is not None
+    return _system_font() is not None or BUNDLED.is_file()
 
 
 @lru_cache(maxsize=None)
 def ui_font(size: int) -> pygame.font.Font:
+    if _system_font() is None and BUNDLED.is_file():
+        return pygame.font.Font(str(BUNDLED), size)
     return pygame.font.SysFont(KOREAN_FONTS, size)
 
 

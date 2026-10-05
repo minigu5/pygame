@@ -8,7 +8,9 @@ from typing import Any
 
 import pygame
 
-SHARED = Path(__file__).resolve().parent.parent / "shared"
+# Beside the client in the repository; inside it in the web build, which packs one folder.
+_HERE = Path(__file__).resolve().parent
+SHARED = _HERE / "shared" if (_HERE / "shared").is_dir() else _HERE.parent / "shared"
 # A picture here named after a background's id ("sea.jpg") is what the room
 # wears when its host picks that background.
 ROOM_ART = Path(__file__).resolve().parent / "assets" / "rooms"

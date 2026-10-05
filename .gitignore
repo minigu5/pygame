@@ -14,3 +14,7 @@ dist/
 
 # IDE
 .idea/
+
+# Web build (tools/build_web.py)
+build/
+server/public/

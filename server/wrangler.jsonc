@@ -3,6 +3,9 @@
   "main": "src/worker.ts",
   "compatibility_date": "2026-09-21",
   "routes": [{ "pattern": "chameleon.omm.run", "custom_domain": true }],
+  // The client built for the browser (tools/build_web.py). A path that is not
+  // one of its files falls through to the worker, as before.
+  "assets": { "directory": "./public" },
   "durable_objects": {
     "bindings": [
       { "name": "ROOM", "class_name": "RoomDO" },

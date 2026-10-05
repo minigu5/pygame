@@ -12,10 +12,12 @@ import array
 import io
 import math
 import random
+import struct
 import time
-import wave
 
 import pygame
+
+from web import WEB
 
 RATE = 22050
 VOLUME = 0.35
@@ -79,15 +81,35 @@ def _brush() -> pygame.mixer.Sound:
     return _sound(samples)
 
 
+def _for_mixer(samples: array.array) -> bytes:
+    """The samples at the rate and channel count the mixer was really given,
+    which need not be what it was asked for."""
+    rate, _, channels = pygame.mixer.get_init()
+    if rate != RATE:
+        count = len(samples) * rate // RATE
+        samples = array.array("h", (samples[index * RATE // rate] for index in range(count)))
+    if channels > 1:
+        wide = array.array("h", bytes(len(samples) * 2 * channels))
+        for channel in range(channels):
+            wide[channel::channels] = samples
+        samples = wide
+    return samples.tobytes()
+
+
 def _sound(samples: array.array) -> pygame.mixer.Sound:
-    buffer = io.BytesIO()
-    with wave.open(buffer, "wb") as stream:
-        stream.setnchannels(1)
-        stream.setsampwidth(2)
-        stream.setframerate(RATE)
-        stream.writeframes(samples.tobytes())
-    buffer.seek(0)
-    return pygame.mixer.Sound(file=buffer)
+    if WEB:
+        # The browser build cannot open a file that is only in memory.
+        return pygame.mixer.Sound(buffer=_for_mixer(samples))
+    # A WAV file written by hand: 16-bit mono PCM. The wave module would do
+    # it, but the browser build's Python comes without one.
+    data = samples.tobytes()
+    header = struct.pack(
+        "<4sI4s4sIHHIIHH4sI",
+        b"RIFF", 36 + len(data), b"WAVE",
+        b"fmt ", 16, 1, 1, RATE, RATE * 2, 2, 16,
+        b"data", len(data),
+    )
+    return pygame.mixer.Sound(file=io.BytesIO(header + data))
 
 
 class Audio:

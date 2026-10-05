@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import queue
 import re
@@ -20,6 +21,7 @@ import pygame
 from fonts import has_korean, readable, ui_font
 from keys import game_keys, latin_key
 from ui_widgets import DIM, LABEL, PANEL_BG, PANEL_EDGE, TEXT, Button
+from web import WEB, bridge
 
 BACKGROUND = (14, 15, 20)
 ROW_SELECTED = (52, 70, 110)
@@ -82,6 +84,11 @@ def fetch_rooms(server: str, timeout: float = FETCH_TIMEOUT) -> list[dict[str, A
         raise LobbyError(f"서버가 요청을 받지 않았습니다. (HTTP {refused.code})") from refused
     except (OSError, ValueError) as failed:
         raise LobbyError("서버 주소와 네트워크를 확인하고 다시 시도하세요.") from failed
+    return parse_rooms(listed)
+
+
+def parse_rooms(listed: Any) -> list[dict[str, Any]]:
+    """The server's answer, checked and put in the order the lobby shows it."""
     if not isinstance(listed, list):
         raise LobbyError("서버가 알 수 없는 형식으로 답했습니다.")
 
@@ -131,12 +138,34 @@ class RoomList:
         self.loaded = False             # an answer, good or bad, has come back at least once
         self.next_refresh = 0.0
         self._results: queue.Queue[list[dict[str, Any]] | LobbyError] = queue.Queue()
+        self._web_fetch: int | None = None      # in a browser, the page's fetch does the reading
 
     def refresh(self) -> None:
         if self.loading:
             return
         self.loading = True
-        threading.Thread(target=self._fetch, daemon=True).start()
+        if WEB:
+            self._web_fetch = int(bridge().fetch(http_base(self.server) + "/rooms"))
+        else:
+            threading.Thread(target=self._fetch, daemon=True).start()
+
+    def _take_web_fetch(self) -> None:
+        if self._web_fetch is None or not bridge().fetched(self._web_fetch):
+            return
+        status = int(bridge().fetchStatus(self._web_fetch))
+        text = str(bridge().fetchText(self._web_fetch))
+        self._web_fetch = None
+        try:
+            if status == 0:
+                raise LobbyError("서버 주소와 네트워크를 확인하고 다시 시도하세요.")
+            if status != 200:
+                raise LobbyError(f"서버가 요청을 받지 않았습니다. (HTTP {status})")
+            try:
+                self._results.put(parse_rooms(json.loads(text)))
+            except ValueError as failed:
+                raise LobbyError("서버가 알 수 없는 형식으로 답했습니다.") from failed
+        except LobbyError as failed:
+            self._results.put(failed)
 
     def _fetch(self) -> None:
         try:
@@ -146,6 +175,7 @@ class RoomList:
 
     def poll(self) -> None:
         """Takes in a finished fetch and starts the next one when it is due."""
+        self._take_web_fetch()
         try:
             result = self._results.get_nowait()
         except queue.Empty:
@@ -183,7 +213,7 @@ class Lobby:
         self._rows: list[tuple[pygame.Rect, dict[str, Any]]] = []
         self._last_click: tuple[float, str] = (0.0, "")
 
-    def run(self) -> RoomChoice | None:
+    async def run(self) -> RoomChoice | None:
         """Shows the lobby until a room is chosen; None means the player quit."""
         game_keys()
         while True:
@@ -197,6 +227,7 @@ class Lobby:
             self._draw()
             pygame.display.flip()
             self.clock.tick(60)
+            await asyncio.sleep(0)
 
     def _room(self, code: str | None) -> dict[str, Any] | None:
         return next((room for room in self.list.rooms if room["code"] == code), None)

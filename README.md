@@ -14,7 +14,7 @@
 | `client/` | pygame-ce 클라이언트 (Python) |
 | `server/` | Cloudflare Workers + Durable Objects 서버 (TypeScript) |
 | `shared/` | 맵과 튜닝 값처럼 양쪽이 함께 읽는 데이터 |
-| `tools/` | 맵 생성과 점검용 스크립트 |
+| `tools/` | 맵 생성, 웹 빌드, 점검용 스크립트 |
 
 ## 준비
 
@@ -78,9 +78,28 @@ npm run dev --prefix server                                   # http://127.0.0.1
 .venv/bin/python client/main.py --server ws://127.0.0.1:8787
 ```
 
+## 브라우저에서 하기
+
+같은 클라이언트를 [pygbag](https://pygame-web.github.io/)으로 묶어 서버가 함께 내보낸다. 설치 없이 브라우저로 서버 주소(`https://chameleon.omm.run`)를 열면 pygame 코드가 WebAssembly로 그대로 돈다. 처음 열 때 파이썬과 pygame을 받아 오느라 십여 초 걸린다.
+
+```sh
+.venv/bin/pip install pygbag
+.venv/bin/python tools/build_web.py     # client/ 와 shared/ 를 묶어 server/public/ 에 놓는다
+```
+
+`server/public/`은 빌드 결과라 저장소에 넣지 않는다. 클라이언트나 `shared/`를 고쳤으면 배포하기 전에 다시 빌드한다. 로컬에서는 `npm run dev --prefix server` 뒤에 `http://127.0.0.1:8787`을 연다 (`localhost`로 열면 pygbag이 자기 개발 서버를 찾느라 멈춘다).
+
+브라우저에는 스레드도 파이썬 소켓도 시스템 글꼴도 없어서 이 부분만 다르게 돈다.
+
+- 화면마다 도는 루프는 코루틴이고 프레임마다 브라우저에 차례를 넘긴다 (`await asyncio.sleep(0)`). 데스크톱에서도 같은 코드가 돈다.
+- 접속과 방 목록은 페이지의 WebSocket과 fetch가 맡고, 파이썬은 프레임마다 쌓인 것을 읽어 간다 (`client/web.py`). 서버 주소는 페이지를 내보낸 그 서버다.
+- 글자는 함께 묶은 Noto Sans KR로 그린다 (`client/assets/fonts/`, 한자를 뺀 것, SIL Open Font License).
+- 브라우저는 접속이 왜 거절됐는지 알려 주지 않아서 방이 가득 찼을 때와 서버에 닿지 못했을 때의 안내가 같다. 캔버스에서는 한글 조합이 되지 않아 방 이름은 영문과 숫자로만 고칠 수 있다. 탭이 가려져 있는 동안에는 게임이 멈춘다.
+
 ## 배포
 
 ```sh
+.venv/bin/python tools/build_web.py
 npx wrangler deploy --config server/wrangler.jsonc
 ```
 

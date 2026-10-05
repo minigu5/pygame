@@ -4,8 +4,28 @@
     {
       "name": "server",
       "runtimeExecutable": "C:\\Program Files\\nodejs\\node.exe",
-      "runtimeArgs": ["server/node_modules/wrangler/bin/wrangler.js", "dev", "--config", "server/wrangler.jsonc"],
+      "runtimeArgs": [
+        "server/node_modules/wrangler/bin/wrangler.js",
+        "dev",
+        "--config",
+        "server/wrangler.jsonc"
+      ],
       "port": 8787
+    },
+    {
+      "name": "server-web",
+      "runtimeExecutable": "C:\\Program Files\\nodejs\\node.exe",
+      "runtimeArgs": [
+        "server/node_modules/wrangler/bin/wrangler.js",
+        "dev",
+        "--config",
+        "server/wrangler.jsonc",
+        "--port",
+        "8788",
+        "--persist-to",
+        "build/wrangler-web"
+      ],
+      "port": 8788
     }
   ]
 }
