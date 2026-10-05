@@ -2,7 +2,7 @@ import type { Env } from "./env";
 import { map, roomAt, tuning } from "./map";
 import { spawnBody, step, type Body } from "./physics";
 import type { ClientMessage, Role, RoomListing, ServerMessage } from "./protocol";
-import { RoundClock, applyChanges, readOptions, type RoomOptions } from "./rounds";
+import { RoundClock, applyChanges, otherBackground, readOptions, type RoomOptions } from "./rounds";
 
 const TICK_MS = 1000 / tuning.tick_hz;
 const SNAPSHOT_EVERY = Math.round(tuning.tick_hz / tuning.snapshot_hz);
@@ -470,6 +470,10 @@ export class RoomDO implements DurableObject {
       case "result":
         if (this.players.size >= 2) {
           this.hunterIndex++;
+          // The host's background is where the first round is played; each
+          // round after it moves somewhere else, so no hiding place is reused.
+          this.options.background = otherBackground(this.options.background);
+          this.broadcastRoomInfo();
           this.startRound();
         } else {
           this.toWaiting();

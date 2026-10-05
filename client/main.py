@@ -329,7 +329,10 @@ async def play(
                     minimap.visited.clear()
                     predictor.reset()
                     gait.clear()
-                    # The server forgets every painting and pose with the round.
+                    # The server forgets every painting and pose with the round,
+                    # and so does this side: last round's camouflage is for
+                    # last round's hiding place.
+                    canvas.clear()
                     art_book.clear()
                     art_sent = None
                     pose_sent = 0

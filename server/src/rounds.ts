@@ -50,6 +50,13 @@ export function applyChanges(options: RoomOptions, changes: RoomChanges, players
   options.background = knownBackground(changes.bg) ?? options.background;
 }
 
+/** A background for the next round: any of the map's but the one just played in. */
+export function otherBackground(current: string): string {
+  const others = map.backgrounds.filter((background) => background.id !== current);
+  if (others.length === 0) return current;
+  return others[Math.floor(Math.random() * others.length)].id;
+}
+
 function knownBackground(raw: unknown): string | null {
   return map.backgrounds.some((background) => background.id === raw) ? (raw as string) : null;
 }

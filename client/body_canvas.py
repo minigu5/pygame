@@ -102,6 +102,15 @@ class BodyCanvas:
         self.version += 1
         return True
 
+    def clear(self) -> None:
+        """Back to the bare body, with nothing left to undo: a new round's canvas."""
+        self.surface.fill(self.base)
+        self.painted.fill((0, 0, 0, 0))
+        self._history.clear()
+        self._layer = None
+        self._stroke_open = False
+        self.version += 1
+
     @property
     def undo_depth(self) -> int:
         return len(self._history)
