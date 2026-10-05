@@ -35,6 +35,7 @@ export type Snapshot = {
   ph: Phase;
   left: number;        // seconds remaining in this phase
   rd: number;          // round number, counting from one
+  ml: number;          // wrong accusations the hunter may still make this round
   win?: Winner;
   me: {
     x: number;
@@ -80,6 +81,6 @@ export type ServerMessage =
   | { t: "j"; id: string; role: Role }
   | { t: "b"; id: string }
   | { t: "c"; id: string; by: string }
-  | { t: "cd"; until: number }
+  | { t: "cd"; until: number; left: number }
   | { t: "art"; id: string; d: string }
   | Snapshot;

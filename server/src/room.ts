@@ -65,6 +65,7 @@ export class RoomDO implements DurableObject {
   private players = new Map<string, Player>();
   private order: string[] = [];
   private hunterIndex = 0;
+  private missesLeft = tuning.accuse_misses;   // the hunter's, this round
   private code = "";
   private options: RoomOptions = {
     name: "",
@@ -224,6 +225,7 @@ export class RoomDO implements DurableObject {
   /** Deal roles for a round: one hunter, everyone else hides. */
   private startRound(): void {
     this.clock.startRound();
+    this.missesLeft = tuning.accuse_misses;
     this.publish();
     const ids = this.order.filter((id) => this.players.has(id));
     this.order = ids;
@@ -328,8 +330,12 @@ export class RoomDO implements DurableObject {
           this.broadcast({ t: "c", id: hit.id, by: player.id });
           if (this.livingChameleons() === 0) this.endRound("hunter");
         } else {
+          // A hunter who clicks everything in sight runs out of guesses,
+          // and with them the round.
+          this.missesLeft--;
           player.accuseReadyAt = now + tuning.accuse_cooldown_ms;
-          this.send(player, { t: "cd", until: player.accuseReadyAt });
+          this.send(player, { t: "cd", until: player.accuseReadyAt, left: this.missesLeft });
+          if (this.missesLeft <= 0) this.endRound("chameleons");
         }
         break;
       }
@@ -539,6 +545,7 @@ export class RoomDO implements DurableObject {
         ph: this.clock.phase,
         left: this.clock.secondsLeft,
         rd: this.clock.round,
+        ml: this.missesLeft,
         ...(this.clock.winner ? { win: this.clock.winner } : {}),
         me: {
           x: tenths(eyes.body.x),

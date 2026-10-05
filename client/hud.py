@@ -37,6 +37,7 @@ class Hud:
         blind: bool,
         watching: bool = False,
         connecting: bool = False,
+        misses_left: int | None = None,
     ) -> None:
         if connecting:
             self._centre_notice(screen, "방에 들어가는 중", "서버에 연결하고 있습니다")
@@ -44,12 +45,13 @@ class Hud:
         if phase == "waiting":
             return      # the waiting room has the screen: see waiting.py
 
-        banner = self._banner(screen, phase, seconds_left, round_number)
+        banner = self._banner(screen, phase, seconds_left, round_number, misses_left)
 
         if winner is not None and phase == "result":
-            self._centre_notice(
-                screen, WINNERS.get(winner, winner), f"{seconds_left}초 뒤 역할을 바꿔 다음 판"
-            )
+            title = WINNERS.get(winner, winner)
+            if winner == "chameleons" and misses_left == 0:
+                title += " · 헌터가 기회를 다 썼습니다"
+            self._centre_notice(screen, title, f"{seconds_left}초 뒤 역할을 바꿔 다음 판")
         elif blind:
             self._centre_notice(
                 screen, "카멜레온이 숨는 중", f"{seconds_left}초 뒤 찾기 시작", cover=True
@@ -59,8 +61,13 @@ class Hud:
             note = self.small_font.render("관전 중 · 다음 판부터 함께합니다", True, DIM)
             screen.blit(note, note.get_rect(midtop=(banner.centerx, banner.bottom + 6)))
 
-    def _banner(self, screen: pygame.Surface, phase: str, seconds_left: int, round_number: int) -> pygame.Rect:
+    def _banner(
+        self, screen: pygame.Surface, phase: str, seconds_left: int, round_number: int, misses_left: int | None
+    ) -> pygame.Rect:
         text = f"{round_number}라운드 · {PHASE_NAMES.get(phase, phase)} · {seconds_left}초"
+        if phase == "seeking" and misses_left is not None:
+            # Everyone sees it: the hiders are waiting for it to run out.
+            text += f" · 헌터의 남은 기회 {misses_left}번"
         label = self.banner_font.render(text, True, TEXT)
         box = label.get_rect()
         box.inflate_ip(28, 14)

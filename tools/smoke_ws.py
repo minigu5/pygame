@@ -218,6 +218,7 @@ async def main(base: str) -> int:
             await first.send(json.dumps({"t": "a", "x": 0, "y": 0}))
             cooldown = await recv_kind(first, "cd")
             check("missing puts the hunter on cooldown", "until" in cooldown, str(cooldown))
+            check("and costs it one of its three wrong guesses", cooldown.get("left") == 2, str(cooldown))
 
             blocked = (await latest_snapshot(second))["me"]
             await first.send(json.dumps({"t": "a", "x": blocked["x"] + 12, "y": blocked["y"] + 16}))

@@ -133,6 +133,7 @@ async def play(
     seconds_left = 0
     round_number = 0
     winner: str | None = None
+    misses_left: int | None = None      # the hunter's wrong guesses still allowed; None from an older server
 
     player_id = "-"
     role = "-"
@@ -339,6 +340,7 @@ async def play(
                 phase = message["ph"]
                 seconds_left = message["left"]
                 winner = message.get("win")
+                misses_left = message.get("ml")
                 role = me["rl"]
                 caught = me["ct"]
                 minimap.note_visit(me["rm"])
@@ -450,6 +452,7 @@ async def play(
             winner,
             blind=phase == "hiding" and role == "hunter",
             watching=role == "spectator",
+            misses_left=misses_left,
             connecting=me is None,
         )
         if len(game_map.rooms) > 1:
